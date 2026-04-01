@@ -1,0 +1,20 @@
+.DS_Store
+.netrc
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+
+# Xcode build outputs
+DerivedData/
+.xcode-derived-data/
+build/
+
+# Legacy SwiftPM caches
+.build/
+.build-dev/
+.swiftpm/
+.dev-home/
+.dev-clang-module-cache/
+
+tmp
