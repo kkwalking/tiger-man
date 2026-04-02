@@ -18,6 +18,12 @@ private struct CandidateFilterSnapshot {
     let items: [DiscoveredCandidate]
 }
 
+private struct CandidateScanRegion {
+    let minX: CGFloat
+    let maxX: CGFloat
+    let mode: String
+}
+
 @MainActor
 final class StatusItemDiscoveryService {
     private let screenCaptureService: ScreenCaptureService
@@ -32,7 +38,8 @@ final class StatusItemDiscoveryService {
             return DiscoveryResult(items: [], menuBarFrame: menuBarFrame, diagnostics: ["无法截取菜单栏图像。"])
         }
 
-        let accessibilityCandidates = collectCandidates(on: screen)
+        let scanRegion = preferredScanRegion(in: menuBarFrame, kBarFrame: kBarFrame)
+        let accessibilityCandidates = collectCandidates(on: screen, scanRegion: scanRegion)
         let screenshotResult = screenshotFallbackCandidates(in: capture, kBarFrame: kBarFrame)
         let screenshotCandidates = screenshotResult.candidates
         let rawCandidates = deduplicate(accessibilityCandidates + screenshotCandidates)
@@ -45,6 +52,7 @@ final class StatusItemDiscoveryService {
         diagnostics.append("screenshotCandidates=\(screenshotCandidates.count)")
         diagnostics.append("rawCandidates=\(rawCandidates.count)")
         diagnostics.append("menuBarFrame=x:\(Int(menuBarFrame.minX)) y:\(Int(menuBarFrame.minY)) w:\(Int(menuBarFrame.width)) h:\(Int(menuBarFrame.height))")
+        diagnostics.append("scanRegion=min:\(Int(scanRegion.minX)) max:\(Int(scanRegion.maxX)) mode:\(scanRegion.mode)")
         if let kBarFrame {
             diagnostics.append("kBarFrame=x:\(Int(kBarFrame.minX)) y:\(Int(kBarFrame.minY)) w:\(Int(kBarFrame.width)) h:\(Int(kBarFrame.height))")
         } else {
@@ -55,13 +63,21 @@ final class StatusItemDiscoveryService {
             from: rawCandidates,
             screen: screen,
             menuBarFrame: menuBarFrame,
+            scanRegion: scanRegion,
             kBarFrame: kBarFrame
         )
         let filteredCandidates = filterSnapshots.last?.items ?? []
+        let interactionEnrichedCandidates = collapseSpatialDuplicates(
+            enrichInteractionTargets(
+            for: filteredCandidates,
+            using: accessibilityCandidates
+            )
+        )
 
         diagnostics.append(contentsOf: filterSnapshots.map { "\($0.name)=\($0.items.count)" })
         diagnostics.append(contentsOf: diagnosticLines(for: rawCandidates, title: "rawCandidateDetails", limit: 40))
         diagnostics.append(contentsOf: diagnosticLines(for: filteredCandidates, title: "filteredCandidateDetails", limit: 40))
+        diagnostics.append(contentsOf: diagnosticLines(for: interactionEnrichedCandidates, title: "interactionCandidateDetails", limit: 40))
 
         if let annotatedPath = exportAnnotatedCaptureImage(
             capture,
@@ -71,7 +87,7 @@ final class StatusItemDiscoveryService {
             diagnostics.append("captureAnnotated=\(annotatedPath)")
         }
 
-        let items = filteredCandidates.compactMap { candidate -> StatusItemModel? in
+        let items = interactionEnrichedCandidates.compactMap { candidate -> StatusItemModel? in
             guard let snapshot = screenCaptureService.cropSnapshot(
                 from: capture,
                 screenRect: candidate.frame,
@@ -86,7 +102,7 @@ final class StatusItemDiscoveryService {
                 ownerName: candidate.ownerName,
                 title: candidate.title,
                 frameInScreen: candidate.frame,
-                interactionPoint: CGPoint(x: candidate.frame.midX, y: candidate.frame.midY),
+                interactionPoint: candidate.interactionPoint ?? CGPoint(x: candidate.frame.midX, y: candidate.frame.midY),
                 source: candidate.source,
                 snapshot: snapshot,
                 isVisibleInMenuBar: true,
@@ -103,9 +119,11 @@ final class StatusItemDiscoveryService {
         from rawCandidates: [DiscoveredCandidate],
         screen: NSScreen,
         menuBarFrame: CGRect,
+        scanRegion: CandidateScanRegion,
         kBarFrame: CGRect?
     ) -> [CandidateFilterSnapshot] {
         let protectedSystemRegionMinX = menuBarFrame.maxX - reservedSystemTrailingWidth(in: menuBarFrame)
+        let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let menuBarCandidates = rawCandidates.filter { candidate in
             candidate.frame.intersects(menuBarBand(for: screen))
         }
@@ -113,14 +131,37 @@ final class StatusItemDiscoveryService {
             guard let kBarFrame else { return true }
             return !candidate.frame.intersects(kBarFrame.insetBy(dx: -6, dy: -4))
         }
-        let rightSideCandidates = withoutKBarCandidates.filter { candidate in
-            candidate.frame.minX >= (menuBarFrame.maxX - min(760, menuBarFrame.width * 0.7))
+        let frontmostMenuFrames = frontmostMenuCandidateFrames(
+            from: withoutKBarCandidates,
+            frontmostBundleID: frontmostBundleID
+        )
+        let frontmostMenuMaxX = frontmostMenuFrames
+            .map { $0.maxX }
+            .max()
+        let effectiveScanMinX: CGFloat
+        if let frontmostMenuMaxX, frontmostMenuMaxX < scanRegion.maxX - 40 {
+            effectiveScanMinX = max(scanRegion.minX, frontmostMenuMaxX + 10)
+        } else {
+            effectiveScanMinX = scanRegion.minX
         }
-        let sizeQualifiedCandidates = rightSideCandidates.filter { candidate in
+        let scanRegionCandidates = withoutKBarCandidates.filter { candidate in
+            candidate.frame.minX >= effectiveScanMinX && candidate.frame.maxX <= scanRegion.maxX
+        }
+        let sizeQualifiedCandidates = scanRegionCandidates.filter { candidate in
             candidate.frame.width >= 8 && candidate.frame.width <= 72 &&
             candidate.frame.height >= 8 && candidate.frame.height <= 32
         }
-        let bundleFilteredCandidates = sizeQualifiedCandidates.filter { candidate in
+        let frontmostFilteredCandidates = sizeQualifiedCandidates.filter { candidate in
+            if let frontmostBundleID,
+               candidate.bundleID == frontmostBundleID {
+                return false
+            }
+            return !isLikelyFrontmostMenuScreenshot(
+                candidate,
+                frontmostMenuFrames: frontmostMenuFrames
+            )
+        }
+        let bundleFilteredCandidates = frontmostFilteredCandidates.filter { candidate in
             candidate.bundleID != Bundle.main.bundleIdentifier
         }
         let appRegionCandidates = bundleFilteredCandidates.filter { candidate in
@@ -131,8 +172,12 @@ final class StatusItemDiscoveryService {
         return [
             CandidateFilterSnapshot(name: "menuBarBandCandidates", items: menuBarCandidates),
             CandidateFilterSnapshot(name: "excludingKBarCandidates", items: withoutKBarCandidates),
-            CandidateFilterSnapshot(name: "rightRegionCandidates", items: rightSideCandidates),
+            CandidateFilterSnapshot(
+                name: "scanRegionCandidates[\(scanRegion.mode) min:\(Int(effectiveScanMinX)) max:\(Int(scanRegion.maxX))]",
+                items: scanRegionCandidates
+            ),
             CandidateFilterSnapshot(name: "sizeQualifiedCandidates", items: sizeQualifiedCandidates),
+            CandidateFilterSnapshot(name: "frontmostFilteredCandidates", items: frontmostFilteredCandidates),
             CandidateFilterSnapshot(name: "bundleFilteredCandidates", items: bundleFilteredCandidates),
             CandidateFilterSnapshot(name: "appRegionCandidates", items: appRegionCandidates),
             CandidateFilterSnapshot(name: "filteredCandidates", items: sortedCandidates),
@@ -158,6 +203,194 @@ final class StatusItemDiscoveryService {
         return false
     }
 
+    private func frontmostMenuCandidateFrames(
+        from candidates: [DiscoveredCandidate],
+        frontmostBundleID: String?
+    ) -> [CGRect] {
+        guard let frontmostBundleID else {
+            return []
+        }
+
+        return candidates.compactMap { candidate in
+            guard candidate.source != .screenshot else {
+                return nil
+            }
+            guard candidate.bundleID == frontmostBundleID else {
+                return nil
+            }
+            guard candidate.frame.width >= 14,
+                  candidate.frame.width <= 180,
+                  candidate.frame.height >= 10,
+                  candidate.frame.height <= 36
+            else {
+                return nil
+            }
+
+            switch candidate.role {
+            case "AXMenuBarItem", "AXMenuButton", "AXButton":
+                return candidate.frame
+            default:
+                return nil
+            }
+        }
+    }
+
+    private func isLikelyFrontmostMenuScreenshot(
+        _ candidate: DiscoveredCandidate,
+        frontmostMenuFrames: [CGRect]
+    ) -> Bool {
+        guard candidate.source == .screenshot else {
+            return false
+        }
+
+        return frontmostMenuFrames.contains { frame in
+            let expanded = frame.insetBy(dx: -12, dy: -6)
+            return expanded.intersects(candidate.frame) ||
+                abs(candidate.frame.midX - frame.midX) <= 18
+        }
+    }
+
+    private func enrichInteractionTargets(
+        for candidates: [DiscoveredCandidate],
+        using accessibilityCandidates: [DiscoveredCandidate]
+    ) -> [DiscoveredCandidate] {
+        let actionableAccessibilityCandidates = accessibilityCandidates.filter { candidate in
+            guard candidate.source != .screenshot else {
+                return false
+            }
+
+            if let bundleID = candidate.bundleID, bundleID == Bundle.main.bundleIdentifier {
+                return false
+            }
+
+            return candidate.frame.width >= 6 && candidate.frame.width <= 120 &&
+                candidate.frame.height >= 6 && candidate.frame.height <= 44
+        }
+
+        return candidates.map { candidate in
+            guard candidate.source == .screenshot else {
+                let interactionPoint = candidate.interactionPoint ?? CGPoint(x: candidate.frame.midX, y: candidate.frame.midY)
+                return candidate.withInteractionPoint(interactionPoint)
+            }
+
+            let centerPoint = CGPoint(x: candidate.frame.midX, y: candidate.frame.midY)
+            guard let matched = bestAccessibilityMatch(for: candidate, in: actionableAccessibilityCandidates) else {
+                return candidate.withInteractionPoint(centerPoint)
+            }
+
+            return candidate.enrichingInteraction(from: matched)
+        }
+    }
+
+    private func bestAccessibilityMatch(
+        for screenshotCandidate: DiscoveredCandidate,
+        in accessibilityCandidates: [DiscoveredCandidate]
+    ) -> DiscoveredCandidate? {
+        guard !accessibilityCandidates.isEmpty else {
+            return nil
+        }
+
+        let center = CGPoint(x: screenshotCandidate.frame.midX, y: screenshotCandidate.frame.midY)
+        let expandedFrame = screenshotCandidate.frame.insetBy(dx: -40, dy: -12)
+
+        let filtered = accessibilityCandidates.filter { candidate in
+            let yDistance = abs(candidate.frame.midY - center.y)
+            guard yDistance <= 18 else {
+                return false
+            }
+
+            if expandedFrame.intersects(candidate.frame) {
+                return true
+            }
+
+            return horizontalDistance(from: center.x, to: candidate.frame) <= 48
+        }
+
+        guard !filtered.isEmpty else {
+            return nil
+        }
+
+        return filtered.max { lhs, rhs in
+            accessibilityMatchScore(lhs, around: screenshotCandidate) < accessibilityMatchScore(rhs, around: screenshotCandidate)
+        }
+    }
+
+    private func accessibilityMatchScore(
+        _ candidate: DiscoveredCandidate,
+        around screenshotCandidate: DiscoveredCandidate
+    ) -> Int {
+        let center = CGPoint(x: screenshotCandidate.frame.midX, y: screenshotCandidate.frame.midY)
+        let expandedFrame = screenshotCandidate.frame.insetBy(dx: -40, dy: -12)
+        var score = 0
+
+        if expandedFrame.intersects(candidate.frame) {
+            score += 60
+        }
+
+        let distance = hypot(candidate.frame.midX - center.x, candidate.frame.midY - center.y)
+        score -= Int((distance * 1.8).rounded())
+        score += candidate.score
+
+        if candidate.source == .accessibility {
+            score += 8
+        } else if candidate.source == .hybrid {
+            score += 4
+        }
+
+        if let bundleID = candidate.bundleID, !bundleID.hasPrefix("com.apple.") {
+            score += 18
+        }
+
+        if candidate.role == "AXMenuBarItem" {
+            score += 6
+        }
+
+        return score
+    }
+
+    private func horizontalDistance(from x: CGFloat, to frame: CGRect) -> CGFloat {
+        if frame.minX <= x, frame.maxX >= x {
+            return 0
+        }
+        return min(abs(frame.minX - x), abs(frame.maxX - x))
+    }
+
+    private func collapseSpatialDuplicates(_ candidates: [DiscoveredCandidate]) -> [DiscoveredCandidate] {
+        let sorted = candidates.sorted { lhs, rhs in
+            interactionPriority(lhs) > interactionPriority(rhs)
+        }
+
+        var kept: [DiscoveredCandidate] = []
+        for candidate in sorted {
+            let overlapsExisting = kept.contains { existing in
+                candidate.frame.intersects(existing.frame.insetBy(dx: -6, dy: -4)) ||
+                    abs(candidate.frame.midX - existing.frame.midX) < 8
+            }
+            if !overlapsExisting {
+                kept.append(candidate)
+            }
+        }
+
+        return kept.sorted { $0.frame.minX < $1.frame.minX }
+    }
+
+    private func interactionPriority(_ candidate: DiscoveredCandidate) -> Int {
+        var score = candidate.score * 10
+        if candidate.source == .accessibility || candidate.source == .hybrid {
+            score += 40
+        }
+        if candidate.bundleID != nil {
+            score += 24
+        }
+        if candidate.role == "AXMenuBarItem" {
+            score += 12
+        }
+        if candidate.role == "Screenshot" {
+            score -= 20
+        }
+        return score
+    }
+
     private func diagnosticLines(
         for candidates: [DiscoveredCandidate],
         title: String,
@@ -178,9 +411,9 @@ final class StatusItemDiscoveryService {
         return lines
     }
 
-    private func collectCandidates(on screen: NSScreen) -> [DiscoveredCandidate] {
+    private func collectCandidates(on screen: NSScreen, scanRegion: CandidateScanRegion) -> [DiscoveredCandidate] {
         let systemUIServerCandidates = candidatesFromSystemUIServer()
-        let fallbackCandidates = candidatesFromSystemWide(on: screen)
+        let fallbackCandidates = candidatesFromSystemWide(on: screen, scanRegion: scanRegion)
 
         let merged = deduplicate(systemUIServerCandidates + fallbackCandidates)
         return merged
@@ -202,23 +435,33 @@ final class StatusItemDiscoveryService {
         return collectCandidatesRecursively(from: root, path: "SystemUIServer", depth: 0, source: .accessibility)
     }
 
-    private func candidatesFromSystemWide(on screen: NSScreen) -> [DiscoveredCandidate] {
+    private func candidatesFromSystemWide(on screen: NSScreen, scanRegion: CandidateScanRegion) -> [DiscoveredCandidate] {
         let systemWideElement = AXUIElementCreateSystemWide()
         let band = menuBarBand(for: screen)
-        let sampleY = band.midY
-        let startX = screen.frame.maxX - 8
-        let endX = max(screen.frame.minX, screen.frame.maxX - 720)
-        let step: CGFloat = 20
+        let sampleYPositions: [CGFloat] = [
+            band.minY + 3,
+            band.midY,
+            band.maxY - 3,
+        ]
+        let startX = min(screen.frame.maxX - 8, scanRegion.maxX)
+        let endX = max(screen.frame.minX, scanRegion.minX)
+        let step: CGFloat = 12
+
+        guard startX > endX else {
+            return []
+        }
 
         var results: [DiscoveredCandidate] = []
-        var x = startX
 
-        while x >= endX {
-            if let element = elementAtPosition(systemWideElement, x: x, y: sampleY),
-               let candidate = bestCandidateFromAncestors(of: element, source: .hybrid) {
-                results.append(candidate)
+        for sampleY in sampleYPositions {
+            var x = startX
+            while x >= endX {
+                if let element = elementAtPosition(systemWideElement, x: x, y: sampleY),
+                   let candidate = bestCandidateFromAncestors(of: element, source: .hybrid) {
+                    results.append(candidate)
+                }
+                x -= step
             }
-            x -= step
         }
 
         return results
@@ -238,18 +481,9 @@ final class StatusItemDiscoveryService {
         let expectedPixelHeight = max(12, Int((capture.menuBarFrame.height * capture.scale).rounded()))
         let analysisHeight = min(height, expectedPixelHeight)
 
-        let defaultStartScreenX = max(capture.menuBarFrame.minX, capture.menuBarFrame.maxX - 760)
-        let startScreenX: CGFloat
-        let startMode: String
-        if let kBarFrame {
-            let anchored = min(max(defaultStartScreenX, kBarFrame.maxX + 4), capture.menuBarFrame.maxX - 120)
-            startScreenX = anchored
-            startMode = "kBarAnchored"
-        } else {
-            startScreenX = defaultStartScreenX
-            startMode = "default"
-        }
-        let endScreenX = capture.menuBarFrame.maxX - 6
+        let scanRegion = preferredScanRegion(in: capture.menuBarFrame, kBarFrame: kBarFrame)
+        let startScreenX = scanRegion.minX
+        let endScreenX = scanRegion.maxX
 
         let startX = max(0, Int(((startScreenX - capture.menuBarFrame.minX) * capture.scale).rounded(.down)))
         let endX = min(width - 1, Int(((endScreenX - capture.menuBarFrame.minX) * capture.scale).rounded(.down)))
@@ -257,7 +491,7 @@ final class StatusItemDiscoveryService {
         guard endX - startX > 20 else {
             return ScreenshotFallbackResult(
                 candidates: [],
-                diagnostics: ["screenshotFallback=rangeTooSmall startX=\(startX) endX=\(endX)"]
+                diagnostics: ["screenshotFallback=rangeTooSmall startX=\(startX) endX=\(endX) mode:\(scanRegion.mode)"]
             )
         }
 
@@ -340,7 +574,8 @@ final class StatusItemDiscoveryService {
                 bundleID: nil,
                 source: .screenshot,
                 score: 2,
-                debugPath: "ScreenshotFallback"
+                debugPath: "ScreenshotFallback",
+                interactionPoint: nil
             )
         }
 
@@ -349,7 +584,7 @@ final class StatusItemDiscoveryService {
         return ScreenshotFallbackResult(
             candidates: candidates,
             diagnostics: [
-                "screenshotRange=start:\(startX) end:\(endX) mode:\(startMode)",
+                "screenshotRange=start:\(startX) end:\(endX) mode:\(scanRegion.mode)",
                 "backgroundLuminance=\(backgroundLuminance)",
                 "analysisHeight=\(analysisHeight)/\(height)",
                 "activeColumns=\(activeColumnCount)/\(activeColumns.count)",
@@ -360,6 +595,24 @@ final class StatusItemDiscoveryService {
                 "splitRanges=\(ranges.count)",
             ]
         )
+    }
+
+    private func preferredScanRegion(in menuBarFrame: CGRect, kBarFrame: CGRect?) -> CandidateScanRegion {
+        let scanWidth = min(460, max(200, menuBarFrame.width * 0.36))
+        let trailingMaxX = menuBarFrame.maxX - 6
+        let trailingMinX = max(menuBarFrame.minX, trailingMaxX - scanWidth)
+
+        guard let kBarFrame else {
+            return CandidateScanRegion(minX: trailingMinX, maxX: trailingMaxX, mode: "trailingFallback")
+        }
+
+        let anchoredMaxX = min(trailingMaxX, max(menuBarFrame.minX, kBarFrame.minX - 4))
+        guard anchoredMaxX - menuBarFrame.minX > 20 else {
+            return CandidateScanRegion(minX: menuBarFrame.minX, maxX: anchoredMaxX, mode: "leftOfKBar[narrow]")
+        }
+
+        let anchoredMinX = max(menuBarFrame.minX, anchoredMaxX - scanWidth)
+        return CandidateScanRegion(minX: anchoredMinX, maxX: anchoredMaxX, mode: "leftOfKBar")
     }
 
     private func collectCandidatesRecursively(
@@ -414,26 +667,30 @@ final class StatusItemDiscoveryService {
         source: StatusItemSource,
         debugPath: String
     ) -> DiscoveredCandidate? {
-        guard let role = stringAttribute(kAXRoleAttribute as String, from: element),
-              supportedRoles.contains(role),
-              let frame = frameAttribute(from: element),
+        guard let frame = frameAttribute(from: element),
               frame.width > 0,
-              frame.height > 0
+              frame.height > 0,
+              frame.width <= 220,
+              frame.height <= 80
         else {
             return nil
         }
 
+        let role = stringAttribute(kAXRoleAttribute as String, from: element) ?? "AXUnknown"
+        let actions = actionNames(for: element)
+
         let owner = ownerProcessInfo(for: element)
         let parentRoles = ancestorRoles(for: element)
+
         let score = candidateScore(
             role: role,
             frame: frame,
-            actions: actionNames(for: element),
+            actions: actions,
             bundleID: owner.bundleIdentifier,
             parentRoles: parentRoles
         )
 
-        guard score >= 3 else {
+        guard score >= 1 else {
             return nil
         }
 
@@ -445,7 +702,8 @@ final class StatusItemDiscoveryService {
             bundleID: owner.bundleIdentifier,
             source: source,
             score: score,
-            debugPath: debugPath
+            debugPath: debugPath,
+            interactionPoint: CGPoint(x: frame.midX, y: frame.midY)
         )
     }
 
@@ -481,12 +739,28 @@ final class StatusItemDiscoveryService {
             score += 1
         }
 
+        if actions.contains("AXShowMenu") {
+            score += 1
+        }
+
         if frame.width >= 10, frame.width <= 72 {
             score += 1
         }
 
         if frame.height >= 10, frame.height <= 32 {
             score += 1
+        }
+
+        if frame.width > 120 || frame.height > 44 {
+            score -= 3
+        }
+
+        if frame.width > 180 || frame.height > 60 {
+            score -= 6
+        }
+
+        if role == "AXUnknown" {
+            score -= 1
         }
 
         if let bundleID, !bundleID.hasPrefix("com.apple.") {
@@ -1039,6 +1313,7 @@ private struct DiscoveredCandidate {
     let source: StatusItemSource
     let score: Int
     let debugPath: String
+    let interactionPoint: CGPoint?
 
     var deduplicationKey: String {
         let frameKey = "\(Int(frame.minX.rounded()))-\(Int(frame.width.rounded()))"
@@ -1050,7 +1325,40 @@ private struct DiscoveredCandidate {
         let owner = ownerName ?? "nil"
         let bundle = bundleID ?? "nil"
         let safeTitle = title.replacingOccurrences(of: "\n", with: " ")
-        return "#\(index) src=\(source.rawValue) score=\(score) role=\(role) owner=\(owner) bundle=\(bundle) title=\(safeTitle) frame=(x:\(Int(frame.minX)) y:\(Int(frame.minY)) w:\(Int(frame.width)) h:\(Int(frame.height))) path=\(debugPath)"
+        let interaction = interactionPoint.map { "(x:\(Int($0.x)) y:\(Int($0.y)))" } ?? "nil"
+        return "#\(index) src=\(source.rawValue) score=\(score) role=\(role) owner=\(owner) bundle=\(bundle) title=\(safeTitle) frame=(x:\(Int(frame.minX)) y:\(Int(frame.minY)) w:\(Int(frame.width)) h:\(Int(frame.height))) interaction=\(interaction) path=\(debugPath)"
+    }
+
+    func withInteractionPoint(_ point: CGPoint) -> DiscoveredCandidate {
+        DiscoveredCandidate(
+            title: title,
+            role: role,
+            frame: frame,
+            ownerName: ownerName,
+            bundleID: bundleID,
+            source: source,
+            score: score,
+            debugPath: debugPath,
+            interactionPoint: point
+        )
+    }
+
+    func enrichingInteraction(from candidate: DiscoveredCandidate) -> DiscoveredCandidate {
+        let mergedTitle = (title == "Screenshot Item") ? candidate.title : title
+        let mergedRole = (role == "Screenshot") ? candidate.role : role
+        let mergedSource: StatusItemSource = source == .screenshot ? .hybrid : source
+
+        return DiscoveredCandidate(
+            title: mergedTitle,
+            role: mergedRole,
+            frame: frame,
+            ownerName: ownerName ?? candidate.ownerName,
+            bundleID: bundleID ?? candidate.bundleID,
+            source: mergedSource,
+            score: max(score, candidate.score),
+            debugPath: "\(debugPath)|matched:\(candidate.source.rawValue)",
+            interactionPoint: candidate.interactionPoint ?? CGPoint(x: candidate.frame.midX, y: candidate.frame.midY)
+        )
     }
 }
 

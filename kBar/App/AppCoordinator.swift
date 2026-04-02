@@ -117,11 +117,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     }
 
     private func toggleMirrorPanel() {
-        if !appState.permissions.isReady {
-            showSettings()
-            return
-        }
-
+        syncPermissions(promptIfNeeded: false)
         if mirrorPanelController.isVisible {
             mirrorPanelController.close()
             appState.isPanelVisible = false
@@ -130,7 +126,20 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
 
         refreshNow(reason: "panel-open")
 
-        guard let anchorFrame = statusItemController.screenFrame() else {
+        let anchorFrame: CGRect
+        if let statusItemFrame = statusItemController.screenFrame() {
+            anchorFrame = statusItemFrame
+        } else if let screen = LayoutCoordinator.primaryScreen() {
+            let menuBarFrame = LayoutCoordinator.menuBarFrame(for: screen)
+            let clampedX = min(max(NSEvent.mouseLocation.x, screen.frame.minX + 8), screen.frame.maxX - 8)
+            anchorFrame = CGRect(
+                x: clampedX - 9,
+                y: menuBarFrame.minY,
+                width: 18,
+                height: menuBarFrame.height
+            )
+            Logger.info("Fallback anchor frame used for mirror panel")
+        } else {
             appState.lastError = "无法获取 kBar 菜单栏位置。"
             return
         }
@@ -139,25 +148,43 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         appState.isPanelVisible = true
     }
 
-    private func showSettings() {
+    private func showSettings(activateApp: Bool = true) {
         syncPermissions(promptIfNeeded: false)
         settingsWindowController.showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if activateApp {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     private func handleInteraction(for item: StatusItemModel, interaction: StatusItemInteraction) {
-        let succeeded = interactionProxy.perform(interaction, on: item)
-        if !succeeded {
-            appState.lastError = "未能触发 \(item.displayName) 的原始操作。"
-        }
-
-        if !appState.keepPanelOpenAfterInteraction {
+        let keepPanelOpen = appState.keepPanelOpenAfterInteraction
+        if !keepPanelOpen {
             mirrorPanelController.close()
             appState.isPanelVisible = false
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            self?.refreshNow(reason: "post-interaction")
+        let performForwarding = { [weak self] in
+            guard let self else {
+                return
+            }
+
+            let succeeded = self.interactionProxy.perform(interaction, on: item)
+            self.appState.interactionDiagnostics = self.interactionProxy.latestInteractionTrace()
+            if !succeeded {
+                self.appState.lastError = "未能触发 \(item.displayName) 的原始操作。"
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.refreshNow(reason: "post-interaction")
+            }
+        }
+
+        if keepPanelOpen {
+            performForwarding()
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                performForwarding()
+            }
         }
     }
 

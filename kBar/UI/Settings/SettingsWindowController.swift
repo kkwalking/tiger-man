@@ -23,6 +23,7 @@ final class SettingsWindowController: NSWindowController {
         window.center()
         window.title = "kBar Settings"
         window.contentView = NSHostingView(rootView: contentView)
+        window.collectionBehavior = [.moveToActiveSpace]
         super.init(window: window)
         shouldCascadeWindows = true
     }

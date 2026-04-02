@@ -73,11 +73,15 @@ private final class MirrorItemInteractionView: NSView {
     var leftAction: (() -> Void)?
     var rightAction: (() -> Void)?
 
-    override func mouseUp(with event: NSEvent) {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
         leftAction?()
     }
 
-    override func rightMouseUp(with event: NSEvent) {
+    override func rightMouseDown(with event: NSEvent) {
         rightAction?()
     }
 }

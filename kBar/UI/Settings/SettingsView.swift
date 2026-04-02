@@ -5,6 +5,9 @@ struct SettingsView: View {
     let permissionCenter: PermissionCenter
     let refreshHandler: () -> Void
 
+    @State
+    private var showScanDiagnostics = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("kBar 设置")
@@ -13,10 +16,6 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Toggle("自动刷新菜单栏映射", isOn: $appState.autoRefreshEnabled)
                 Toggle("交互后保持面板打开", isOn: $appState.keepPanelOpenAfterInteraction)
-
-                Text("当前版本只聚焦虚拟菜单栏展示与交互转发，不再遮挡原始菜单栏。")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
             }
 
             Divider()
@@ -27,10 +26,6 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 LabeledContent("已识别图标数量", value: "\(appState.items.count)")
-                LabeledContent("最后刷新原因", value: appState.lastRefreshReason)
-                if let lastRefreshDate = appState.lastRefreshDate {
-                    LabeledContent("最后刷新时间", value: dateFormatter.string(from: lastRefreshDate))
-                }
                 if let lastError = appState.lastError {
                     Text(lastError)
                         .font(.system(size: 12))
@@ -38,16 +33,16 @@ struct SettingsView: View {
                 }
             }
 
-            if !appState.scanDiagnostics.isEmpty {
+            if !appState.interactionDiagnostics.isEmpty {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("扫描诊断")
+                    Text("交互诊断")
                         .font(.system(size: 14, weight: .semibold))
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 6) {
-                            ForEach(Array(appState.scanDiagnostics.enumerated()), id: \.offset) { _, line in
+                            ForEach(Array(appState.interactionDiagnostics.enumerated()), id: \.offset) { _, line in
                                 Text(line)
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(.secondary)
@@ -56,10 +51,50 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .frame(height: 260)
+                    .frame(height: 120)
                     .padding(10)
                     .background(Color.black.opacity(0.04))
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+
+            if !appState.scanDiagnostics.isEmpty {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("扫描诊断")
+                            .font(.system(size: 14, weight: .semibold))
+                        Spacer()
+                        Button(showScanDiagnostics ? "收起" : "展开") {
+                            showScanDiagnostics.toggle()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    }
+
+                    if showScanDiagnostics {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(Array(appState.scanDiagnostics.enumerated()), id: \.offset) { _, line in
+                                    Text(line)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                        .frame(height: 180)
+                        .padding(10)
+                        .background(Color.black.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    } else {
+                        Text("默认收起，排查识别问题时再展开。")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -105,9 +140,3 @@ struct SettingsView: View {
         }
     }
 }
-
-private let dateFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-    return formatter
-}()
