@@ -14,7 +14,7 @@ final class InteractionProxy {
         let allowAXAction = shouldAttemptAXAction(for: item)
         latestTrace = []
         let fallbackPoint = preferredClickPoint(for: item)
-        let resolvedTarget = resolveTarget(for: item, interaction: interaction)
+        let resolvedTarget = shouldResolveDynamicTarget(for: item) ? resolveTarget(for: item, interaction: interaction) : nil
         let resolvedPoint = safeResolvedPoint(
             resolvedTarget?.clickPoint,
             expectedFrame: item.frameInScreen,
@@ -70,6 +70,14 @@ final class InteractionProxy {
         }
 
         if item.role == "Screenshot" {
+            return false
+        }
+
+        return true
+    }
+
+    private func shouldResolveDynamicTarget(for item: StatusItemModel) -> Bool {
+        if item.source == .screenshot, item.ownerBundleID == nil {
             return false
         }
 

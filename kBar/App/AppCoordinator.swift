@@ -173,6 +173,13 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             if !succeeded {
                 self.appState.lastError = "未能触发 \(item.displayName) 的原始操作。"
             }
+            DiagnosticsFileLogger.recordInteractionSnapshot(
+                item: item,
+                interaction: interaction,
+                succeeded: succeeded,
+                diagnostics: self.appState.interactionDiagnostics,
+                lastError: self.appState.lastError
+            )
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                 self?.refreshNow(reason: "post-interaction")
@@ -215,11 +222,29 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             appState.scanDiagnostics = ["权限未就绪，跳过扫描。"]
             appState.lastError = "请先授权辅助功能和录屏权限。"
             mirrorPanelController.update(items: [])
+            DiagnosticsFileLogger.recordScanSnapshot(
+                reason: reason,
+                permissions: appState.permissions,
+                itemCount: 0,
+                menuBarFrame: appState.menuBarFrame,
+                kBarFrame: statusItemController.screenFrame(),
+                diagnostics: appState.scanDiagnostics,
+                lastError: appState.lastError
+            )
             return
         }
 
         guard let screen = LayoutCoordinator.primaryScreen() else {
             appState.lastError = "未找到主屏幕。"
+            DiagnosticsFileLogger.recordScanSnapshot(
+                reason: reason,
+                permissions: appState.permissions,
+                itemCount: 0,
+                menuBarFrame: appState.menuBarFrame,
+                kBarFrame: statusItemController.screenFrame(),
+                diagnostics: ["未找到主屏幕。"],
+                lastError: appState.lastError
+            )
             return
         }
 
@@ -234,5 +259,14 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         appState.lastRefreshReason = reason
 
         mirrorPanelController.update(items: result.items)
+        DiagnosticsFileLogger.recordScanSnapshot(
+            reason: reason,
+            permissions: appState.permissions,
+            itemCount: result.items.count,
+            menuBarFrame: result.menuBarFrame,
+            kBarFrame: kBarFrame,
+            diagnostics: result.diagnostics,
+            lastError: appState.lastError
+        )
     }
 }

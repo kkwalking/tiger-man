@@ -131,16 +131,21 @@ final class StatusItemDiscoveryService {
             guard let kBarFrame else { return true }
             return !candidate.frame.intersects(kBarFrame.insetBy(dx: -6, dy: -4))
         }
-        let frontmostMenuFrames = frontmostMenuCandidateFrames(
+        let inferredFrontmostMenuFrames = frontmostMenuCandidateFrames(
             from: withoutKBarCandidates,
             frontmostBundleID: frontmostBundleID
         )
+        let directFrontmostMenuFrames = frontmostApplicationMenuFrames(on: screen)
+        let frontmostMenuFrames = directFrontmostMenuFrames + inferredFrontmostMenuFrames
         let frontmostMenuMaxX = frontmostMenuFrames
             .map { $0.maxX }
             .max()
+        let minimumUsableScanWidth = min(220, max(140, (scanRegion.maxX - scanRegion.minX) * 0.42))
         let effectiveScanMinX: CGFloat
         if let frontmostMenuMaxX, frontmostMenuMaxX < scanRegion.maxX - 40 {
-            effectiveScanMinX = max(scanRegion.minX, frontmostMenuMaxX + 10)
+            let proposedMinX = max(scanRegion.minX, frontmostMenuMaxX + 10)
+            let cappedMinX = max(scanRegion.minX, scanRegion.maxX - minimumUsableScanWidth)
+            effectiveScanMinX = min(proposedMinX, cappedMinX)
         } else {
             effectiveScanMinX = scanRegion.minX
         }
@@ -151,7 +156,10 @@ final class StatusItemDiscoveryService {
             candidate.frame.width >= 8 && candidate.frame.width <= 72 &&
             candidate.frame.height >= 8 && candidate.frame.height <= 32
         }
-        let frontmostFilteredCandidates = sizeQualifiedCandidates.filter { candidate in
+        let menuScopedCandidates = sizeQualifiedCandidates.filter { candidate in
+            candidate.source == .screenshot || candidate.isMenuBarScoped
+        }
+        let frontmostFilteredCandidates = menuScopedCandidates.filter { candidate in
             if let frontmostBundleID,
                candidate.bundleID == frontmostBundleID {
                 return false
@@ -161,7 +169,10 @@ final class StatusItemDiscoveryService {
                 frontmostMenuFrames: frontmostMenuFrames
             )
         }
-        let bundleFilteredCandidates = frontmostFilteredCandidates.filter { candidate in
+        let textFilteredCandidates = frontmostFilteredCandidates.filter { candidate in
+            !shouldFilterTextLikeScreenshot(candidate, frontmostMenuMaxX: frontmostMenuMaxX)
+        }
+        let bundleFilteredCandidates = textFilteredCandidates.filter { candidate in
             candidate.bundleID != Bundle.main.bundleIdentifier
         }
         let appRegionCandidates = bundleFilteredCandidates.filter { candidate in
@@ -173,11 +184,13 @@ final class StatusItemDiscoveryService {
             CandidateFilterSnapshot(name: "menuBarBandCandidates", items: menuBarCandidates),
             CandidateFilterSnapshot(name: "excludingKBarCandidates", items: withoutKBarCandidates),
             CandidateFilterSnapshot(
-                name: "scanRegionCandidates[\(scanRegion.mode) min:\(Int(effectiveScanMinX)) max:\(Int(scanRegion.maxX))]",
+                name: "scanRegionCandidates[\(scanRegion.mode) min:\(Int(effectiveScanMinX)) max:\(Int(scanRegion.maxX)) reserve:\(Int(minimumUsableScanWidth))]",
                 items: scanRegionCandidates
             ),
             CandidateFilterSnapshot(name: "sizeQualifiedCandidates", items: sizeQualifiedCandidates),
+            CandidateFilterSnapshot(name: "menuScopedCandidates", items: menuScopedCandidates),
             CandidateFilterSnapshot(name: "frontmostFilteredCandidates", items: frontmostFilteredCandidates),
+            CandidateFilterSnapshot(name: "textFilteredCandidates", items: textFilteredCandidates),
             CandidateFilterSnapshot(name: "bundleFilteredCandidates", items: bundleFilteredCandidates),
             CandidateFilterSnapshot(name: "appRegionCandidates", items: appRegionCandidates),
             CandidateFilterSnapshot(name: "filteredCandidates", items: sortedCandidates),
@@ -218,6 +231,9 @@ final class StatusItemDiscoveryService {
             guard candidate.bundleID == frontmostBundleID else {
                 return nil
             }
+            guard candidate.isMenuBarScoped else {
+                return nil
+            }
             guard candidate.frame.width >= 14,
                   candidate.frame.width <= 180,
                   candidate.frame.height >= 10,
@@ -235,6 +251,44 @@ final class StatusItemDiscoveryService {
         }
     }
 
+    private func frontmostApplicationMenuFrames(on screen: NSScreen) -> [CGRect] {
+        guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
+              frontmostApp.processIdentifier > 0
+        else {
+            return []
+        }
+
+        let appElement = AXUIElementCreateApplication(frontmostApp.processIdentifier)
+        guard let root = resolvedMenuBarElement(from: appElement) else {
+            return []
+        }
+
+        let band = menuBarBand(for: screen)
+        return collectCandidatesRecursively(from: root, path: "FrontmostAppMenu", depth: 0, source: .accessibility)
+            .compactMap { candidate in
+                guard candidate.isMenuBarScoped else {
+                    return nil
+                }
+                guard candidate.frame.intersects(band) else {
+                    return nil
+                }
+                guard candidate.frame.width >= 14,
+                      candidate.frame.width <= 180,
+                      candidate.frame.height >= 10,
+                      candidate.frame.height <= 36
+                else {
+                    return nil
+                }
+
+                switch candidate.role {
+                case "AXMenuBarItem", "AXMenuButton", "AXButton":
+                    return candidate.frame
+                default:
+                    return nil
+                }
+            }
+    }
+
     private func isLikelyFrontmostMenuScreenshot(
         _ candidate: DiscoveredCandidate,
         frontmostMenuFrames: [CGRect]
@@ -250,6 +304,21 @@ final class StatusItemDiscoveryService {
         }
     }
 
+    private func shouldFilterTextLikeScreenshot(
+        _ candidate: DiscoveredCandidate,
+        frontmostMenuMaxX: CGFloat?
+    ) -> Bool {
+        guard candidate.source == .screenshot, candidate.looksTextLike else {
+            return false
+        }
+
+        if let frontmostMenuMaxX {
+            return candidate.frame.midX <= frontmostMenuMaxX + 24
+        }
+
+        return candidate.frame.width >= max(18, candidate.frame.height * 1.2)
+    }
+
     private func enrichInteractionTargets(
         for candidates: [DiscoveredCandidate],
         using accessibilityCandidates: [DiscoveredCandidate]
@@ -258,8 +327,16 @@ final class StatusItemDiscoveryService {
             guard candidate.source != .screenshot else {
                 return false
             }
+            guard candidate.isMenuBarScoped else {
+                return false
+            }
 
             if let bundleID = candidate.bundleID, bundleID == Bundle.main.bundleIdentifier {
+                return false
+            }
+
+            if let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+               candidate.bundleID == frontmostBundleID {
                 return false
             }
 
@@ -545,6 +622,7 @@ final class StatusItemDiscoveryService {
         let edgeRanges = ScreenGeometry.mergeColumnActivity(edgeColumns, gapTolerance: 5, minimumWidth: 4)
         let mergedRanges = deduplicateRanges(contrastRanges + edgeRanges)
         let ranges = splitWideRanges(mergedRanges, contrastScores: contrastScores)
+        var textLikeCandidateCount = 0
         let candidates: [DiscoveredCandidate] = ranges.compactMap { range -> DiscoveredCandidate? in
             let globalRange = (range.lowerBound + startX)...(range.upperBound + startX)
             guard let verticalRange = detectVerticalRangeByLocalContrast(
@@ -565,6 +643,18 @@ final class StatusItemDiscoveryService {
                 height: CGFloat(verticalRange.upperBound - verticalRange.lowerBound + 5)
             )
             let screenRect = screenRect(from: imageRect, capture: capture)
+            let looksTextLike = looksLikeMenuTextFragment(
+                in: imageRect,
+                pointer: rawPointer,
+                imageWidth: width,
+                imageHeight: analysisHeight,
+                bytesPerRow: bytesPerRow,
+                bytesPerPixel: bytesPerPixel,
+                backgroundLuminance: backgroundLuminance
+            )
+            if looksTextLike {
+                textLikeCandidateCount += 1
+            }
 
             return DiscoveredCandidate(
                 title: "Screenshot Item",
@@ -575,7 +665,9 @@ final class StatusItemDiscoveryService {
                 source: .screenshot,
                 score: 2,
                 debugPath: "ScreenshotFallback",
-                interactionPoint: nil
+                interactionPoint: nil,
+                looksTextLike: looksTextLike,
+                isMenuBarScoped: true
             )
         }
 
@@ -593,12 +685,14 @@ final class StatusItemDiscoveryService {
                 "edgeRanges=\(edgeRanges.count)",
                 "mergedRanges=\(mergedRanges.count)",
                 "splitRanges=\(ranges.count)",
+                "textLikeScreenshotCandidates=\(textLikeCandidateCount)",
             ]
         )
     }
 
     private func preferredScanRegion(in menuBarFrame: CGRect, kBarFrame: CGRect?) -> CandidateScanRegion {
-        let scanWidth = min(460, max(200, menuBarFrame.width * 0.36))
+        let baseScanWidth = min(460, max(200, menuBarFrame.width * 0.36))
+        let scanWidth = max(160, baseScanWidth - 76)
         let trailingMaxX = menuBarFrame.maxX - 6
         let trailingMinX = max(menuBarFrame.minX, trailingMaxX - scanWidth)
 
@@ -703,7 +797,9 @@ final class StatusItemDiscoveryService {
             source: source,
             score: score,
             debugPath: debugPath,
-            interactionPoint: CGPoint(x: frame.midX, y: frame.midY)
+            interactionPoint: CGPoint(x: frame.midX, y: frame.midY),
+            looksTextLike: false,
+            isMenuBarScoped: isMenuBarScoped(role: role, parentRoles: parentRoles)
         )
     }
 
@@ -786,6 +882,15 @@ final class StatusItemDiscoveryService {
         return firstCandidateContainer(in: children, depth: 0)
     }
 
+    private func resolvedMenuBarElement(from appElement: AXUIElement) -> AXUIElement? {
+        if let menuBar = copyElementAttribute(kAXMenuBarAttribute as String, from: appElement) {
+            return menuBar
+        }
+
+        let children = arrayAttribute(kAXChildrenAttribute as String, from: appElement)
+        return firstElement(withRole: "AXMenuBar", in: children, depth: 0)
+    }
+
     private func firstCandidateContainer(in elements: [AXUIElement], depth: Int) -> AXUIElement? {
         guard depth <= 4 else {
             return nil
@@ -807,6 +912,26 @@ final class StatusItemDiscoveryService {
             }
 
             if let nested = firstCandidateContainer(in: children, depth: depth + 1) {
+                return nested
+            }
+        }
+
+        return nil
+    }
+
+    private func firstElement(withRole targetRole: String, in elements: [AXUIElement], depth: Int) -> AXUIElement? {
+        guard depth <= 4 else {
+            return nil
+        }
+
+        for element in elements {
+            let role = stringAttribute(kAXRoleAttribute as String, from: element)
+            if role == targetRole {
+                return element
+            }
+
+            let children = arrayAttribute(kAXChildrenAttribute as String, from: element)
+            if let nested = firstElement(withRole: targetRole, in: children, depth: depth + 1) {
                 return nested
             }
         }
@@ -916,6 +1041,113 @@ final class StatusItemDiscoveryService {
         }
 
         return minY...maxY
+    }
+
+    private func looksLikeMenuTextFragment(
+        in imageRect: CGRect,
+        pointer: UnsafePointer<UInt8>,
+        imageWidth: Int,
+        imageHeight: Int,
+        bytesPerRow: Int,
+        bytesPerPixel: Int,
+        backgroundLuminance: Int
+    ) -> Bool {
+        let minX = max(0, Int(imageRect.minX.rounded(.down)))
+        let maxX = min(imageWidth - 1, Int(imageRect.maxX.rounded(.up)) - 1)
+        let minY = max(0, Int(imageRect.minY.rounded(.down)))
+        let maxY = min(imageHeight - 1, Int(imageRect.maxY.rounded(.up)) - 1)
+
+        guard maxX > minX, maxY > minY else {
+            return false
+        }
+
+        let width = maxX - minX + 1
+        let height = maxY - minY + 1
+        guard width >= 10, height >= 10 else {
+            return false
+        }
+
+        var activeColumns = Array(repeating: false, count: width)
+        var activeRows = Array(repeating: false, count: height)
+        var columnInk = Array(repeating: 0, count: width)
+        var foregroundPixelCount = 0
+
+        for y in minY...maxY {
+            var rowInk = 0
+            for x in minX...maxX {
+                let lum = luminance(
+                    pointer: pointer,
+                    x: x,
+                    y: y,
+                    bytesPerRow: bytesPerRow,
+                    bytesPerPixel: bytesPerPixel
+                )
+                let contrast = localContrastScore(
+                    pointer: pointer,
+                    x: x,
+                    y: y,
+                    width: imageWidth,
+                    height: imageHeight,
+                    bytesPerRow: bytesPerRow,
+                    bytesPerPixel: bytesPerPixel
+                )
+                let isForeground = abs(lum - backgroundLuminance) >= 22 || contrast >= 28
+                if isForeground {
+                    foregroundPixelCount += 1
+                    rowInk += 1
+                    columnInk[x - minX] += 1
+                }
+            }
+            activeRows[y - minY] = rowInk >= max(2, width / 9)
+        }
+
+        for (index, ink) in columnInk.enumerated() {
+            activeColumns[index] = ink >= max(2, height / 8)
+        }
+
+        let area = width * height
+        guard area > 0 else {
+            return false
+        }
+
+        let coverageRatio = CGFloat(foregroundPixelCount) / CGFloat(area)
+        let activeRowRatio = CGFloat(activeRows.filter { $0 }.count) / CGFloat(height)
+        let aspectRatio = CGFloat(width) / CGFloat(height)
+        let columnGroups = ScreenGeometry.mergeColumnActivity(activeColumns, gapTolerance: 1, minimumWidth: 1)
+        let averageGroupWidth: CGFloat
+        if columnGroups.isEmpty {
+            averageGroupWidth = 0
+        } else {
+            let totalGroupWidth = columnGroups.reduce(0) { partialResult, range in
+                partialResult + (range.upperBound - range.lowerBound + 1)
+            }
+            averageGroupWidth = CGFloat(totalGroupWidth) / CGFloat(columnGroups.count)
+        }
+
+        var transitions = 0
+        for index in 1..<activeColumns.count where activeColumns[index] != activeColumns[index - 1] {
+            transitions += 1
+        }
+
+        let wideWordLike =
+            aspectRatio >= 1.45 &&
+            columnGroups.count >= 2 &&
+            coverageRatio <= 0.34 &&
+            activeRowRatio <= 0.78
+        let fragmentedLetterLike =
+            aspectRatio >= 0.85 &&
+            width >= 14 &&
+            columnGroups.count >= 3 &&
+            averageGroupWidth <= 5 &&
+            coverageRatio <= 0.28 &&
+            activeRowRatio <= 0.72
+        let oscillatingTextLike =
+            width >= 16 &&
+            transitions >= 6 &&
+            coverageRatio <= 0.30 &&
+            activeRowRatio <= 0.74
+
+        return wideWordLike || fragmentedLetterLike || oscillatingTextLike
     }
 
     private func screenRect(from imageRect: CGRect, capture: MenuBarCapture) -> CGRect {
@@ -1171,6 +1403,18 @@ final class StatusItemDiscoveryService {
         return roles
     }
 
+    private func isMenuBarScoped(role: String, parentRoles: [String]) -> Bool {
+        if role == "AXMenuBarItem" {
+            return true
+        }
+
+        if parentRoles.contains("AXMenuBar") || parentRoles.contains("AXMenuBarItem") {
+            return true
+        }
+
+        return false
+    }
+
     private func ownerProcessInfo(for element: AXUIElement) -> ProcessInfoSnapshot {
         var pid: pid_t = 0
         let error = AXUIElementGetPid(element, &pid)
@@ -1314,6 +1558,8 @@ private struct DiscoveredCandidate {
     let score: Int
     let debugPath: String
     let interactionPoint: CGPoint?
+    let looksTextLike: Bool
+    let isMenuBarScoped: Bool
 
     var deduplicationKey: String {
         let frameKey = "\(Int(frame.minX.rounded()))-\(Int(frame.width.rounded()))"
@@ -1326,7 +1572,9 @@ private struct DiscoveredCandidate {
         let bundle = bundleID ?? "nil"
         let safeTitle = title.replacingOccurrences(of: "\n", with: " ")
         let interaction = interactionPoint.map { "(x:\(Int($0.x)) y:\(Int($0.y)))" } ?? "nil"
-        return "#\(index) src=\(source.rawValue) score=\(score) role=\(role) owner=\(owner) bundle=\(bundle) title=\(safeTitle) frame=(x:\(Int(frame.minX)) y:\(Int(frame.minY)) w:\(Int(frame.width)) h:\(Int(frame.height))) interaction=\(interaction) path=\(debugPath)"
+        let textLike = looksTextLike ? " textLike=true" : ""
+        let scoped = source == .screenshot ? "" : " menuScoped=\(isMenuBarScoped)"
+        return "#\(index) src=\(source.rawValue) score=\(score) role=\(role) owner=\(owner) bundle=\(bundle) title=\(safeTitle) frame=(x:\(Int(frame.minX)) y:\(Int(frame.minY)) w:\(Int(frame.width)) h:\(Int(frame.height))) interaction=\(interaction)\(textLike)\(scoped) path=\(debugPath)"
     }
 
     func withInteractionPoint(_ point: CGPoint) -> DiscoveredCandidate {
@@ -1339,7 +1587,9 @@ private struct DiscoveredCandidate {
             source: source,
             score: score,
             debugPath: debugPath,
-            interactionPoint: point
+            interactionPoint: point,
+            looksTextLike: looksTextLike,
+            isMenuBarScoped: isMenuBarScoped
         )
     }
 
@@ -1357,7 +1607,9 @@ private struct DiscoveredCandidate {
             source: mergedSource,
             score: max(score, candidate.score),
             debugPath: "\(debugPath)|matched:\(candidate.source.rawValue)",
-            interactionPoint: candidate.interactionPoint ?? CGPoint(x: candidate.frame.midX, y: candidate.frame.midY)
+            interactionPoint: candidate.interactionPoint ?? CGPoint(x: candidate.frame.midX, y: candidate.frame.midY),
+            looksTextLike: looksTextLike,
+            isMenuBarScoped: isMenuBarScoped || candidate.isMenuBarScoped
         )
     }
 }
