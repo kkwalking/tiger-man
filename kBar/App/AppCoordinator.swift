@@ -18,6 +18,9 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         },
         settingsHandler: { [weak self] in
             self?.showSettings()
+        },
+        dismissalExemptionFrameProvider: { [weak self] in
+            self?.statusItemController.screenFrame()
         }
     )
     private lazy var settingsWindowController = SettingsWindowController(

@@ -6,6 +6,7 @@ final class MirrorPanelController: NSObject, NSWindowDelegate {
     private let appState: AppState
     private let activateHandler: (StatusItemModel, StatusItemInteraction) -> Void
     private let settingsHandler: () -> Void
+    private let dismissalExemptionFrameProvider: () -> CGRect?
     private var globalEventMonitor: Any?
     private var localEventMonitor: Any?
 
@@ -36,11 +37,13 @@ final class MirrorPanelController: NSObject, NSWindowDelegate {
     init(
         appState: AppState,
         activateHandler: @escaping (StatusItemModel, StatusItemInteraction) -> Void,
-        settingsHandler: @escaping () -> Void
+        settingsHandler: @escaping () -> Void,
+        dismissalExemptionFrameProvider: @escaping () -> CGRect?
     ) {
         self.appState = appState
         self.activateHandler = activateHandler
         self.settingsHandler = settingsHandler
+        self.dismissalExemptionFrameProvider = dismissalExemptionFrameProvider
     }
 
     func update(items: [StatusItemModel]) {
@@ -103,9 +106,9 @@ final class MirrorPanelController: NSObject, NSWindowDelegate {
 
         globalEventMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        ) { [weak self] _ in
+        ) { [weak self] event in
             DispatchQueue.main.async { [weak self] in
-                self?.dismissIfNeededForExternalClick()
+                self?.dismissIfNeededForExternalClick(event)
             }
         }
 
@@ -138,7 +141,7 @@ final class MirrorPanelController: NSObject, NSWindowDelegate {
         }
 
         let eventLocation = event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
-        guard !panel.frame.contains(eventLocation) else {
+        guard shouldDismiss(for: event, at: eventLocation) else {
             return event
         }
 
@@ -146,14 +149,29 @@ final class MirrorPanelController: NSObject, NSWindowDelegate {
         return event
     }
 
-    private func dismissIfNeededForExternalClick() {
+    private func dismissIfNeededForExternalClick(_ event: NSEvent) {
         guard panel.isVisible else {
             return
         }
 
-        if !panel.frame.contains(NSEvent.mouseLocation) {
+        let eventLocation = event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
+        if shouldDismiss(for: event, at: eventLocation) {
             dismissPanel()
         }
+    }
+
+    private func shouldDismiss(for event: NSEvent, at location: CGPoint) -> Bool {
+        if panel.frame.contains(location) {
+            return false
+        }
+
+        if event.type == .leftMouseDown,
+           let exemptFrame = dismissalExemptionFrameProvider(),
+           exemptFrame.contains(location) {
+            return false
+        }
+
+        return true
     }
 
     private func dismissPanel() {
