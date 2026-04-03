@@ -90,7 +90,7 @@ private struct RunningApplicationHiddenProbeResult {
 final class StatusItemDiscoveryService {
     private let diagnosticsVersion = "2026-04-02-hidden-extras-v2"
     private let screenCaptureService: ScreenCaptureService
-    private let diagnosticImageExportEnabled = ProcessInfo.processInfo.environment["KBAR_EXPORT_SCAN_IMAGES"] == "1"
+    private let diagnosticImageExportEnabled = DiagnosticsFileLogger.isScanImageExportEnabled
 
     init(screenCaptureService: ScreenCaptureService) {
         self.screenCaptureService = screenCaptureService

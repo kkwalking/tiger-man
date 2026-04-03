@@ -8,8 +8,21 @@ enum DiagnosticsFileLogger {
     private static let latestInteractionURL = baseURL.appendingPathComponent("kbar-interaction-latest.log")
     private static let latestHiddenDiscoveryURL = baseURL.appendingPathComponent("kbar-hidden-discovery-latest.log")
     private static let queue = DispatchQueue(label: "com.zhouzekun.kbar.diagnostics-file")
+    private static let diagnosticsEnabled = ProcessInfo.processInfo.environment["KBAR_ENABLE_DIAGNOSTICS"] == "1"
+    private static let scanImageExportRequested = ProcessInfo.processInfo.environment["KBAR_EXPORT_SCAN_IMAGES"] == "1"
+
+    static var isEnabled: Bool {
+        diagnosticsEnabled
+    }
+
+    static var isScanImageExportEnabled: Bool {
+        diagnosticsEnabled && scanImageExportRequested
+    }
 
     static func appendRuntimeLog(level: String, message: String) {
+        guard diagnosticsEnabled else {
+            return
+        }
         appendEventBlock(
             title: "runtime",
             lines: [
@@ -28,6 +41,9 @@ enum DiagnosticsFileLogger {
         diagnostics: [String],
         lastError: String?
     ) {
+        guard diagnosticsEnabled else {
+            return
+        }
         var lines: [String] = [
             "timestamp=\(timestamp())",
             "reason=\(reason)",
@@ -59,6 +75,9 @@ enum DiagnosticsFileLogger {
         diagnostics: [String],
         lastError: String?
     ) {
+        guard diagnosticsEnabled else {
+            return
+        }
         var lines: [String] = [
             "timestamp=\(timestamp())",
             "item=\(item.displayName)",
@@ -93,6 +112,9 @@ enum DiagnosticsFileLogger {
         diagnostics: [String],
         lastError: String?
     ) {
+        guard diagnosticsEnabled else {
+            return
+        }
         var lines: [String] = [
             "timestamp=\(timestamp())",
             "reason=\(reason)",

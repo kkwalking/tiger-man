@@ -9,7 +9,7 @@
 3. 面板优先展示 `kBar` 左侧的菜单栏图标，避免 `kBar` 被系统挤进刘海后难以点击。
 4. 面板图标需要尽量贴近原始菜单栏观感，但当前阶段以“识别正确、点击正确”为先。
 5. 当前阶段重点仍是隐藏图标能力，但“能否发现”这一步已经打通，重点转为兼容性扩展。
-6. 隐藏图标能力必须持续依赖自动化诊断日志推进，调试结论优先从本地日志获取。
+6. 隐藏图标能力必须持续依赖可开关的自动化诊断日志推进；默认关闭，需要排查时再显式开启。
 
 ## 2. 已完成里程碑
 
@@ -26,7 +26,8 @@
 3. 左键点击 `kBar` 可开关虚拟菜单栏，不再依赖先打开设置页。
 4. 虚拟面板支持外部点击关闭，并可跟随当前 Space。
 5. 已修复 `kBar` 二次点击与面板外部点击监听的冲突；当前面板弹出后，再点一次 `kBar` 会直接收起，而不是立刻又重新打开。
-6. 镜像图标交互转发已实现：
+6. 已优化面板打开速度；当前点击 `kBar` 会优先显示面板，再按需补刷新，不再被同步扫描卡住约 1 秒。
+7. 镜像图标交互转发已实现：
    - 语义项优先走 `AXPress` / `AXShowMenu`
    - 失败回退 `CGEvent`
    - 纯截图项直接使用发现阶段的交互点，不再在点击时临时重算到相邻图标
@@ -42,13 +43,16 @@
    - 文本型 screenshot 候选过滤
    - 仅保留菜单栏语义树 AX 候选
 4. VS Code 等前台应用的顶部状态控件不再被当成真实菜单栏图标参与交互映射。
-5. 设置页已支持扫描诊断、交互诊断、手动刷新。
-6. 已新增落盘诊断文件，便于复现后直接分析：
+5. 设置页当前只保留权限状态与手动刷新，不再内置诊断区域。
+6. 已新增可开关的落盘诊断文件；默认关闭，便于需要时复现后直接分析：
    - `kbar-events.log`
    - `kbar-scan-latest.log`
    - `kbar-interaction-latest.log`
-7. 已补充隐藏图标探测专用诊断日志，避免排查继续依赖人工反馈。
-8. 已补充隐藏图标交互专用日志，能够看到 AX failure code、synthetic tap 类型和刷新抑制状态。
+   - `kbar-hidden-discovery-latest.log`
+7. `KBAR_ENABLE_DIAGNOSTICS=1` 可开启上述日志落盘；`KBAR_EXPORT_SCAN_IMAGES=1` 可在此基础上额外导出菜单栏原始截图与候选标注图到系统临时目录。
+8. 用法：开发时可在 Xcode Scheme 的 `Run > Environment Variables` 中添加变量；命令行启动时可使用 `KBAR_ENABLE_DIAGNOSTICS=1 /path/to/kBar`，需要导图时再追加 `KBAR_EXPORT_SCAN_IMAGES=1`。
+9. 已补充隐藏图标探测专用诊断日志，避免排查继续依赖人工反馈。
+10. 已补充隐藏图标交互专用日志，能够看到 AX failure code、synthetic tap 类型和刷新抑制状态。
 
 ### 2.4 图标快照与视觉
 
@@ -70,12 +74,12 @@
 
 ## 3. 当前可用能力快照
 
-1. 点击 `kBar` 可稳定开关虚拟菜单栏，已显示时再次点击会收起。
+1. 点击 `kBar` 可稳定开关虚拟菜单栏，已显示时再次点击会收起；打开速度已明显快于早期同步刷新方案。
 2. 面板可展示当前真实菜单栏可见区域中识别到的第三方图标。
 3. 左键/右键交互转发主链路可运行。
 4. VS Code 这类前台 App 场景下，误把顶部状态控件当成候选的问题已被压住。
 5. 纯截图项的点击定位已稳定，不再二次偏移到相邻图标。
-6. 设置页和落盘日志都可用于定位扫描或交互问题。
+6. 需要排查扫描或交互问题时，可通过环境变量显式开启落盘日志与扫描图片导出。
 7. 被 macOS 隐藏的图标已经能进入面板并展示 logo。
 8. 当前下一步不是继续做 UI 微调，而是扩大隐藏图标兼容性并继续压缩交互回退的不确定性。
 
@@ -103,7 +107,7 @@
    - [`kBar/Services/InteractionProxy.swift`](kBar/Services/InteractionProxy.swift)
    - [`kBar/Services/ScreenCaptureService.swift`](kBar/Services/ScreenCaptureService.swift)
    - [`kBar/App/AppCoordinator.swift`](kBar/App/AppCoordinator.swift)
-3. 如果要排查问题，优先读取：
+3. 如果要排查问题，先用环境变量开启诊断，再优先读取：
    - `kbar-events.log`
    - `kbar-scan-latest.log`
    - `kbar-interaction-latest.log`
