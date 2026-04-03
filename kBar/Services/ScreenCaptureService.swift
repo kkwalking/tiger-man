@@ -262,12 +262,12 @@ final class ScreenCaptureService {
             }
         }
 
-        isolateDominantConnectedRegion(
+        isolateDominantComponentCluster(
             width: width,
             height: height,
             bytesPerRow: bytesPerRow,
             bytesPerPixel: bytesPerPixel,
-            activeAlpha: 104,
+            activeAlpha: 72,
             data: data
         )
 
@@ -275,13 +275,13 @@ final class ScreenCaptureService {
             for x in 0..<width {
                 let offset = (y * bytesPerRow) + (x * bytesPerPixel)
                 let alpha = Int(data[offset + 3])
-                if alpha < 96 {
+                if alpha < 52 {
                     data[offset + 3] = 0
                     data[offset] = 0
                     data[offset + 1] = 0
                     data[offset + 2] = 0
                 } else {
-                    data[offset + 3] = 255
+                    data[offset + 3] = UInt8(min(255, max(alpha, 176)))
                 }
             }
         }
@@ -289,7 +289,7 @@ final class ScreenCaptureService {
         return context.makeImage()
     }
 
-    private func isolateDominantConnectedRegion(
+    private func isolateDominantComponentCluster(
         width: Int,
         height: Int,
         bytesPerRow: Int,
@@ -380,31 +380,20 @@ final class ScreenCaptureService {
             return
         }
 
+        let clusters = buildComponentClusters(components, width: width, height: height)
         let centerX = Double(width - 1) / 2.0
         let centerY = Double(height - 1) / 2.0
-        let best = components.max { lhs, rhs in
-            componentScore(lhs, centerX: centerX, centerY: centerY, width: width, height: height)
-                < componentScore(rhs, centerX: centerX, centerY: centerY, width: width, height: height)
+        let bestCluster = clusters.max { lhs, rhs in
+            componentClusterScore(lhs, centerX: centerX, centerY: centerY, width: width, height: height)
+                < componentClusterScore(rhs, centerX: centerX, centerY: centerY, width: width, height: height)
         }
-        guard let best else {
+        guard let bestCluster else {
             return
         }
 
         var keep = Array(repeating: false, count: pixelCount)
-        let expandedBest = best.expanded(padding: 3, width: width, height: height)
-        for component in components {
-            let shouldKeep: Bool
-            if component === best {
-                shouldKeep = true
-            } else {
-                let areaThreshold = max(10, best.area / 5)
-                shouldKeep = component.area >= areaThreshold && component.intersects(expandedBest)
-            }
-
-            guard shouldKeep else {
-                continue
-            }
-            for pixel in component.pixels {
+        for componentIndex in bestCluster.componentIndices {
+            for pixel in components[componentIndex].pixels {
                 keep[pixel] = true
             }
         }
@@ -420,20 +409,92 @@ final class ScreenCaptureService {
         }
     }
 
-    private func componentScore(
-        _ component: AlphaComponent,
+    private func buildComponentClusters(
+        _ components: [AlphaComponent],
+        width: Int,
+        height: Int
+    ) -> [AlphaComponentCluster] {
+        guard !components.isEmpty else {
+            return []
+        }
+
+        let clusterPadding = max(4, min(8, min(width, height) / 4))
+        let expandedBounds = components.map {
+            $0.expanded(padding: clusterPadding, width: width, height: height)
+        }
+        var visited = Array(repeating: false, count: components.count)
+        var clusters: [AlphaComponentCluster] = []
+
+        for startIndex in components.indices {
+            guard !visited[startIndex] else {
+                continue
+            }
+            visited[startIndex] = true
+
+            var stack = [startIndex]
+            var componentIndices: [Int] = []
+            var area = 0
+            var minX = width
+            var maxX = 0
+            var minY = height
+            var maxY = 0
+            var sumX = 0
+            var sumY = 0
+
+            while let index = stack.popLast() {
+                componentIndices.append(index)
+                let component = components[index]
+                area += component.area
+                minX = min(minX, component.minX)
+                maxX = max(maxX, component.maxX)
+                minY = min(minY, component.minY)
+                maxY = max(maxY, component.maxY)
+                sumX += component.sumX
+                sumY += component.sumY
+
+                for neighborIndex in components.indices where !visited[neighborIndex] {
+                    if expandedBounds[index].intersects(expandedBounds[neighborIndex]) {
+                        visited[neighborIndex] = true
+                        stack.append(neighborIndex)
+                    }
+                }
+            }
+
+            clusters.append(
+                AlphaComponentCluster(
+                    componentIndices: componentIndices,
+                    area: area,
+                    minX: minX,
+                    maxX: maxX,
+                    minY: minY,
+                    maxY: maxY,
+                    sumX: sumX,
+                    sumY: sumY
+                )
+            )
+        }
+
+        return clusters
+    }
+
+    private func componentClusterScore(
+        _ cluster: AlphaComponentCluster,
         centerX: Double,
         centerY: Double,
         width: Int,
         height: Int
     ) -> Double {
-        let cx = Double(component.sumX) / Double(component.area)
-        let cy = Double(component.sumY) / Double(component.area)
+        let cx = Double(cluster.sumX) / Double(cluster.area)
+        let cy = Double(cluster.sumY) / Double(cluster.area)
         let dx = cx - centerX
         let dy = cy - centerY
         let distancePenalty = (dx * dx) + (dy * dy)
-        let edgePenalty = (component.minX <= 1 || component.minY <= 1 || component.maxX >= width - 2 || component.maxY >= height - 2) ? 120.0 : 0.0
-        return Double(component.area * 100) - (distancePenalty * 6.0) - edgePenalty
+        let edgePenalty = (cluster.minX <= 1 || cluster.minY <= 1 || cluster.maxX >= width - 2 || cluster.maxY >= height - 2) ? 120.0 : 0.0
+        let widthSpan = max(1, cluster.maxX - cluster.minX + 1)
+        let heightSpan = max(1, cluster.maxY - cluster.minY + 1)
+        let coverage = Double(cluster.area) / Double(widthSpan * heightSpan)
+        let compactnessBonus = coverage * 36.0
+        return Double(cluster.area * 100) - (distancePenalty * 6.0) - edgePenalty + compactnessBonus
     }
 
     private func trimTransparentBounds(
@@ -590,10 +651,17 @@ private final class AlphaComponent {
             maxY: min(height - 1, maxY + padding)
         )
     }
+}
 
-    func intersects(_ bounds: AlphaComponentBounds) -> Bool {
-        !(maxX < bounds.minX || minX > bounds.maxX || maxY < bounds.minY || minY > bounds.maxY)
-    }
+private struct AlphaComponentCluster {
+    let componentIndices: [Int]
+    let area: Int
+    let minX: Int
+    let maxX: Int
+    let minY: Int
+    let maxY: Int
+    let sumX: Int
+    let sumY: Int
 }
 
 private struct AlphaComponentBounds {
@@ -601,4 +669,8 @@ private struct AlphaComponentBounds {
     let maxX: Int
     let minY: Int
     let maxY: Int
+
+    func intersects(_ other: AlphaComponentBounds) -> Bool {
+        !(maxX < other.minX || minX > other.maxX || maxY < other.minY || minY > other.maxY)
+    }
 }
