@@ -35,6 +35,8 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     private var cancellables: Set<AnyCancellable> = []
     private var automaticRefreshSuppressedUntil: Date?
     private let automaticRefreshSuppressionDuration: TimeInterval = 5.0
+    private let panelOpenRefreshDelay: TimeInterval = 0.05
+    private let panelOpenRefreshStalenessThreshold: TimeInterval = 1.5
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Logger.info("Application launched")
@@ -126,28 +128,14 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             return
         }
 
-        refreshNow(reason: "panel-open")
-
-        let anchorFrame: CGRect
-        if let statusItemFrame = statusItemController.screenFrame() {
-            anchorFrame = statusItemFrame
-        } else if let screen = LayoutCoordinator.primaryScreen() {
-            let menuBarFrame = LayoutCoordinator.menuBarFrame(for: screen)
-            let clampedX = min(max(NSEvent.mouseLocation.x, screen.frame.minX + 8), screen.frame.maxX - 8)
-            anchorFrame = CGRect(
-                x: clampedX - 9,
-                y: menuBarFrame.minY,
-                width: 18,
-                height: menuBarFrame.height
-            )
-            Logger.info("Fallback anchor frame used for mirror panel")
-        } else {
+        guard let anchorFrame = mirrorPanelAnchorFrame() else {
             appState.lastError = "无法获取 kBar 菜单栏位置。"
             return
         }
 
         mirrorPanelController.show(relativeTo: anchorFrame)
         appState.isPanelVisible = true
+        refreshAfterPresentingMirrorPanelIfNeeded()
     }
 
     private func showSettings(activateApp: Bool = true) {
@@ -332,6 +320,47 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             "Skip refresh reason=\(reason) suppressedUntil=\(automaticRefreshSuppressedUntil)"
         )
         return true
+    }
+
+    private func mirrorPanelAnchorFrame() -> CGRect? {
+        if let statusItemFrame = statusItemController.screenFrame() {
+            return statusItemFrame
+        }
+
+        guard let screen = LayoutCoordinator.primaryScreen() else {
+            return nil
+        }
+
+        let menuBarFrame = LayoutCoordinator.menuBarFrame(for: screen)
+        let clampedX = min(max(NSEvent.mouseLocation.x, screen.frame.minX + 8), screen.frame.maxX - 8)
+        Logger.info("Fallback anchor frame used for mirror panel")
+        return CGRect(
+            x: clampedX - 9,
+            y: menuBarFrame.minY,
+            width: 18,
+            height: menuBarFrame.height
+        )
+    }
+
+    private func refreshAfterPresentingMirrorPanelIfNeeded() {
+        guard shouldRefreshMirrorPanelContentsOnOpen else {
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + panelOpenRefreshDelay) { [weak self] in
+            guard let self, self.mirrorPanelController.isVisible else {
+                return
+            }
+            self.refreshNow(reason: "panel-open")
+        }
+    }
+
+    private var shouldRefreshMirrorPanelContentsOnOpen: Bool {
+        guard let lastRefreshDate = appState.lastRefreshDate else {
+            return true
+        }
+
+        return Date().timeIntervalSince(lastRefreshDate) >= panelOpenRefreshStalenessThreshold
     }
 
     private var automaticRefreshReasons: Set<String> {

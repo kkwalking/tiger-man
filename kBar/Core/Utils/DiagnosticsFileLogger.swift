@@ -121,7 +121,7 @@ enum DiagnosticsFileLogger {
     }
 
     private static func writeLatest(_ content: String, to url: URL) {
-        queue.sync {
+        queue.async {
             do {
                 try ensureBaseDirectory()
                 try content.write(to: url, atomically: true, encoding: .utf8)
@@ -132,7 +132,7 @@ enum DiagnosticsFileLogger {
     }
 
     private static func append(_ content: String, to url: URL) {
-        queue.sync {
+        queue.async {
             do {
                 try ensureBaseDirectory()
                 if !FileManager.default.fileExists(atPath: url.path) {

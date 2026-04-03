@@ -90,6 +90,7 @@ private struct RunningApplicationHiddenProbeResult {
 final class StatusItemDiscoveryService {
     private let diagnosticsVersion = "2026-04-02-hidden-extras-v2"
     private let screenCaptureService: ScreenCaptureService
+    private let diagnosticImageExportEnabled = ProcessInfo.processInfo.environment["KBAR_EXPORT_SCAN_IMAGES"] == "1"
 
     init(screenCaptureService: ScreenCaptureService) {
         self.screenCaptureService = screenCaptureService
@@ -134,7 +135,8 @@ final class StatusItemDiscoveryService {
         var diagnostics: [String] = []
         diagnostics.append("diagnosticsVersion=\(diagnosticsVersion)")
         diagnostics.append("captureImage=\(capture.image.width)x\(capture.image.height) scale=\(String(format: "%.2f", capture.scale))")
-        if let exportPath = exportCaptureImage(capture) {
+        if diagnosticImageExportEnabled,
+           let exportPath = exportCaptureImage(capture) {
             diagnostics.append("captureExport=\(exportPath)")
         }
         diagnostics.append("axCandidates=\(accessibilityCandidates.count)")
@@ -185,11 +187,12 @@ final class StatusItemDiscoveryService {
         diagnostics.append(contentsOf: diagnosticLines(for: hiddenProbeEnrichedCandidates, title: "hiddenProbeEnrichedCandidateDetails", limit: 40))
         diagnostics.append(contentsOf: diagnosticLines(for: interactionEnrichedCandidates, title: "interactionCandidateDetails", limit: 40))
 
-        if let annotatedPath = exportAnnotatedCaptureImage(
-            capture,
-            rawCandidates: rawCandidates,
-            filteredCandidates: filteredCandidates
-        ) {
+        if diagnosticImageExportEnabled,
+           let annotatedPath = exportAnnotatedCaptureImage(
+               capture,
+               rawCandidates: rawCandidates,
+               filteredCandidates: filteredCandidates
+           ) {
             diagnostics.append("captureAnnotated=\(annotatedPath)")
         }
 
