@@ -42,13 +42,25 @@ final class ScreenCaptureService {
         let keyedImage = keyedIconImage(from: cropped, thresholdBias: thresholdBias) ?? cropped
         let trimMinAlpha = source == .accessibility ? 20 : 28
         let trimmedImage = trimTransparentBounds(in: keyedImage, minimumAlpha: trimMinAlpha, padding: 1) ?? keyedImage
+        let edgeArtifactCleanedImage = removeSmallEdgeArtifacts(
+            in: trimmedImage,
+            minimumAlpha: max(44, trimMinAlpha),
+            edgeInset: 2,
+            maxArea: 10,
+            maxSpan: 4
+        ) ?? trimmedImage
+        let finalImage = trimTransparentBounds(
+            in: edgeArtifactCleanedImage,
+            minimumAlpha: trimMinAlpha,
+            padding: 1
+        ) ?? edgeArtifactCleanedImage
 
         let logicalScale = capture.scale > 0 ? capture.scale : 1
         let logicalSize = NSSize(
-            width: CGFloat(trimmedImage.width) / logicalScale,
-            height: CGFloat(trimmedImage.height) / logicalScale
+            width: CGFloat(finalImage.width) / logicalScale,
+            height: CGFloat(finalImage.height) / logicalScale
         )
-        return NSImage(cgImage: trimmedImage, size: logicalSize)
+        return NSImage(cgImage: finalImage, size: logicalSize)
     }
 
     private func imageRect(for screenRect: CGRect, inside capture: MenuBarCapture) -> CGRect {
@@ -563,6 +575,126 @@ final class ScreenCaptureService {
             height: max(1, endY - startY + 1)
         )
         return image.cropping(to: rect)
+    }
+
+    private func removeSmallEdgeArtifacts(
+        in image: CGImage,
+        minimumAlpha: Int,
+        edgeInset: Int,
+        maxArea: Int,
+        maxSpan: Int
+    ) -> CGImage? {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else {
+            return nil
+        }
+
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        guard
+            let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: bitmapInfo
+            )
+        else {
+            return nil
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data?.assumingMemoryBound(to: UInt8.self) else {
+            return nil
+        }
+
+        let pixelCount = width * height
+        var visited = Array(repeating: false, count: pixelCount)
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = (y * width) + x
+                if visited[index] {
+                    continue
+                }
+                visited[index] = true
+
+                let offset = (y * bytesPerRow) + (x * bytesPerPixel)
+                if Int(data[offset + 3]) < minimumAlpha {
+                    continue
+                }
+
+                var queue = [index]
+                var head = 0
+                var componentPixels: [Int] = []
+                var minX = x
+                var maxX = x
+                var minY = y
+                var maxY = y
+
+                while head < queue.count {
+                    let current = queue[head]
+                    head += 1
+                    componentPixels.append(current)
+
+                    let cx = current % width
+                    let cy = current / width
+                    minX = min(minX, cx)
+                    maxX = max(maxX, cx)
+                    minY = min(minY, cy)
+                    maxY = max(maxY, cy)
+
+                    for ny in max(0, cy - 1)...min(height - 1, cy + 1) {
+                        for nx in max(0, cx - 1)...min(width - 1, cx + 1) {
+                            if nx == cx && ny == cy {
+                                continue
+                            }
+                            let neighborIndex = (ny * width) + nx
+                            if visited[neighborIndex] {
+                                continue
+                            }
+                            visited[neighborIndex] = true
+
+                            let neighborOffset = (ny * bytesPerRow) + (nx * bytesPerPixel)
+                            if Int(data[neighborOffset + 3]) >= minimumAlpha {
+                                queue.append(neighborIndex)
+                            }
+                        }
+                    }
+                }
+
+                let widthSpan = maxX - minX + 1
+                let heightSpan = maxY - minY + 1
+                let touchesEdge =
+                    minX <= edgeInset ||
+                    minY <= edgeInset ||
+                    maxX >= width - 1 - edgeInset ||
+                    maxY >= height - 1 - edgeInset
+
+                guard touchesEdge,
+                      componentPixels.count <= maxArea,
+                      widthSpan <= maxSpan,
+                      heightSpan <= maxSpan
+                else {
+                    continue
+                }
+
+                for pixel in componentPixels {
+                    let px = pixel % width
+                    let py = pixel / width
+                    let pixelOffset = (py * bytesPerRow) + (px * bytesPerPixel)
+                    data[pixelOffset + 3] = 0
+                    data[pixelOffset] = 0
+                    data[pixelOffset + 1] = 0
+                    data[pixelOffset + 2] = 0
+                }
+            }
+        }
+
+        return context.makeImage()
     }
 
     private func averageColor(
