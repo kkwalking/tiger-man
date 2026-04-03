@@ -5,14 +5,42 @@ import ApplicationServices
 final class InteractionProxy {
     private let systemWideElement = AXUIElementCreateSystemWide()
     private var latestTrace: [String] = []
+    private var latestResult = InteractionExecutionResult()
+    private let hiddenAXActionTimeouts: [Float] = [0.6, 1.4, 2.5]
+    private let defaultAXActionTimeouts: [Float] = [0.4]
 
     func latestInteractionTrace() -> [String] {
         latestTrace
     }
 
+    func latestInteractionResult() -> InteractionExecutionResult {
+        latestResult
+    }
+
     func perform(_ interaction: StatusItemInteraction, on item: StatusItemModel) -> Bool {
         let allowAXAction = shouldAttemptAXAction(for: item)
         latestTrace = []
+        let isHiddenItem = !item.isVisibleInMenuBar
+        let storedDirectAXElement = item.directAXElement
+        latestResult = InteractionExecutionResult(isHiddenItem: isHiddenItem)
+
+        if isHiddenItem {
+            record(
+                "Interaction start type=\(describe(interaction)) source=\(item.source.rawValue) item=\(item.displayName) hidden=true directAX=\(storedDirectAXElement != nil)"
+            )
+            if let storedDirectAXElement,
+               performAXInteraction(interaction, on: storedDirectAXElement, context: "hidden-direct") {
+                latestResult.succeeded = true
+                latestResult.usedAXAction = true
+                latestResult.usedStoredDirectAXTarget = true
+                record("Interaction success via direct AX target for hidden item")
+                return true
+            }
+            if storedDirectAXElement != nil {
+                record("Interaction direct AX attempt failed for hidden item; continuing with fallback paths")
+            }
+        }
+
         let fallbackPoint = preferredClickPoint(for: item)
         let resolvedTarget = shouldResolveDynamicTarget(for: item) ? resolveTarget(for: item, interaction: interaction) : nil
         let resolvedPoint = safeResolvedPoint(
@@ -25,18 +53,52 @@ final class InteractionProxy {
             "Interaction start type=\(describe(interaction)) source=\(item.source.rawValue) item=\(item.displayName) frame=(x:\(Int(item.frameInScreen.minX)) y:\(Int(item.frameInScreen.minY)) w:\(Int(item.frameInScreen.width)) h:\(Int(item.frameInScreen.height))) fallback=\(pointDescription(fallbackPoint)) resolved=\(pointDescription(resolvedPoint)) hasAXTarget=\(resolvedTarget != nil) allowAXAction=\(allowAXAction)"
         )
 
-        if performSyntheticMouseInteraction(interaction, at: resolvedPoint) {
+        if isHiddenItem,
+           allowAXAction,
+           let resolvedTarget,
+           performAXInteraction(interaction, on: resolvedTarget.element, context: "hidden-resolved") {
+            latestResult.succeeded = true
+            latestResult.usedAXAction = true
+            latestResult.usedResolvedAXTarget = true
+            record("Interaction success via AX target for hidden item")
+            return true
+        }
+
+        if performSyntheticMouseInteraction(
+            interaction,
+            at: resolvedPoint,
+            preferredTaps: syntheticMouseTaps(forHiddenItem: isHiddenItem)
+        ) {
+            latestResult.succeeded = true
+            latestResult.usedSyntheticMouseFallback = true
             record("Interaction success via synthetic mouse at resolved point")
             return true
         }
 
-        if interaction == .rightClick, performSyntheticControlLeftClick(at: resolvedPoint) {
+        if interaction == .rightClick,
+           performSyntheticControlLeftClick(
+            at: resolvedPoint,
+            preferredTaps: syntheticMouseTaps(forHiddenItem: isHiddenItem)
+           ) {
+            latestResult.succeeded = true
+            latestResult.usedControlLeftFallback = true
             record("Interaction success via control+left at resolved point")
             return true
         }
 
-        if allowAXAction, let resolvedTarget, performAXInteraction(interaction, on: resolvedTarget.element) {
+        if allowAXAction, let resolvedTarget, performAXInteraction(interaction, on: resolvedTarget.element, context: "resolved") {
+            latestResult.succeeded = true
+            latestResult.usedAXAction = true
+            latestResult.usedResolvedAXTarget = true
             record("Interaction success via AX target")
+            return true
+        }
+
+        if allowAXAction, let directAXElement = storedDirectAXElement, performAXInteraction(interaction, on: directAXElement, context: "stored-direct") {
+            latestResult.succeeded = true
+            latestResult.usedAXAction = true
+            latestResult.usedStoredDirectAXTarget = true
+            record("Interaction success via stored direct AX target")
             return true
         }
 
@@ -45,18 +107,41 @@ final class InteractionProxy {
             return false
         }
 
-        if performSyntheticMouseInteraction(interaction, at: fallbackPoint) {
+        if performSyntheticMouseInteraction(
+            interaction,
+            at: fallbackPoint,
+            preferredTaps: syntheticMouseTaps(forHiddenItem: isHiddenItem)
+        ) {
+            latestResult.succeeded = true
+            latestResult.usedSyntheticMouseFallback = true
             record("Interaction success via synthetic mouse at fallback point")
             return true
         }
 
-        if interaction == .rightClick, performSyntheticControlLeftClick(at: fallbackPoint) {
+        if interaction == .rightClick,
+           performSyntheticControlLeftClick(
+            at: fallbackPoint,
+            preferredTaps: syntheticMouseTaps(forHiddenItem: isHiddenItem)
+           ) {
+            latestResult.succeeded = true
+            latestResult.usedControlLeftFallback = true
             record("Interaction success via control+left at fallback point")
             return true
         }
 
-        if allowAXAction, let resolvedTarget, performAXInteraction(interaction, on: resolvedTarget.element) {
+        if allowAXAction, let resolvedTarget, performAXInteraction(interaction, on: resolvedTarget.element, context: "resolved-after-fallback") {
+            latestResult.succeeded = true
+            latestResult.usedAXAction = true
+            latestResult.usedResolvedAXTarget = true
             record("Interaction success via AX target after fallback attempts")
+            return true
+        }
+
+        if allowAXAction, let directAXElement = storedDirectAXElement, performAXInteraction(interaction, on: directAXElement, context: "stored-direct-after-fallback") {
+            latestResult.succeeded = true
+            latestResult.usedAXAction = true
+            latestResult.usedStoredDirectAXTarget = true
+            record("Interaction success via stored direct AX target after fallback attempts")
             return true
         }
 
@@ -224,15 +309,25 @@ final class InteractionProxy {
         return score
     }
 
-    private func performAXInteraction(_ interaction: StatusItemInteraction, on element: AXUIElement) -> Bool {
+    private func performAXInteraction(
+        _ interaction: StatusItemInteraction,
+        on element: AXUIElement,
+        context: String
+    ) -> Bool {
         let primary = primaryAXAction(for: interaction)
         let secondary = secondaryAXAction(for: interaction)
         let chain = ancestorChain(startingAt: element, depthLimit: 6)
 
-        for candidate in chain where performAXAction(primary, on: candidate) {
+        record(
+            "AX chain context=\(context) interaction=\(describe(interaction)) candidateCount=\(chain.count) origin=\(elementSummary(element))"
+        )
+
+        let timeouts = axActionTimeouts(for: context)
+
+        for candidate in chain where performAXAction(primary, on: candidate, context: context, timeouts: timeouts) {
             return true
         }
-        for candidate in chain where performAXAction(secondary, on: candidate) {
+        for candidate in chain where performAXAction(secondary, on: candidate, context: context, timeouts: timeouts) {
             return true
         }
 
@@ -257,60 +352,99 @@ final class InteractionProxy {
         }
     }
 
-    private func performAXAction(_ action: AXAction, on element: AXUIElement) -> Bool {
+    private func performAXAction(
+        _ action: AXAction,
+        on element: AXUIElement,
+        context: String,
+        timeouts: [Float]
+    ) -> Bool {
         let supportedActions = actionNames(for: element)
         guard supportedActions.contains(action.rawValue) else {
+            record(
+                "AX action skipped context=\(context) action=\(action.rawValue) reason=unsupported element=\(elementSummary(element)) supported=\(supportedActions.joined(separator: ","))"
+            )
             return false
         }
 
-        let result = AXUIElementPerformAction(element, action.rawValue as CFString)
-        return result == .success
+        let attemptTimeouts = timeouts.isEmpty ? defaultAXActionTimeouts : timeouts
+        for (index, timeout) in attemptTimeouts.enumerated() {
+            applyAXMessagingTimeout(timeout, to: element)
+            let result = AXUIElementPerformAction(element, action.rawValue as CFString)
+            if result == .success {
+                record(
+                    "AX action success context=\(context) action=\(action.rawValue) attempt=\(index + 1) timeout=\(timeout) element=\(elementSummary(element))"
+                )
+                return true
+            }
+
+            record(
+                "AX action failed context=\(context) action=\(action.rawValue) attempt=\(index + 1) timeout=\(timeout) error=\(describe(result)) element=\(elementSummary(element)) supported=\(supportedActions.joined(separator: ","))",
+                isError: true
+            )
+
+            if result != .cannotComplete {
+                break
+            }
+        }
+
+        return false
     }
 
-    private func performSyntheticMouseInteraction(_ interaction: StatusItemInteraction, at point: CGPoint) -> Bool {
-        let tap: CGEventTapLocation = .cghidEventTap
+    private func performSyntheticMouseInteraction(
+        _ interaction: StatusItemInteraction,
+        at point: CGPoint,
+        preferredTaps: [CGEventTapLocation]
+    ) -> Bool {
         let eventPoint = syntheticMouseEventPoint(for: point)
-        let succeeded: Bool
-        switch interaction {
-        case .leftClick:
-            succeeded = synthesizeMouseClick(
+        for tap in preferredTaps {
+            let succeeded: Bool
+            switch interaction {
+            case .leftClick:
+                succeeded = synthesizeMouseClick(
+                    at: eventPoint,
+                    button: .left,
+                    flags: [],
+                    tap: tap
+                )
+            case .rightClick:
+                succeeded = synthesizeMouseClick(
+                    at: eventPoint,
+                    button: .right,
+                    flags: [],
+                    tap: tap
+                )
+            }
+
+            if succeeded {
+                record(
+                    "Synthetic click posted target=\(pointDescription(point)) event=\(pointDescription(eventPoint)) tap=\(tapDescription(tap))"
+                )
+                return true
+            }
+        }
+        return false
+    }
+
+    private func performSyntheticControlLeftClick(
+        at point: CGPoint,
+        preferredTaps: [CGEventTapLocation]
+    ) -> Bool {
+        let eventPoint = syntheticMouseEventPoint(for: point)
+        for tap in preferredTaps {
+            let succeeded = synthesizeMouseClick(
                 at: eventPoint,
                 button: .left,
-                flags: [],
+                flags: .maskControl,
                 tap: tap
             )
-        case .rightClick:
-            succeeded = synthesizeMouseClick(
-                at: eventPoint,
-                button: .right,
-                flags: [],
-                tap: tap
-            )
+            if succeeded {
+                record(
+                    "Synthetic control-left posted target=\(pointDescription(point)) event=\(pointDescription(eventPoint)) tap=\(tapDescription(tap))"
+                )
+                return true
+            }
         }
-
-        if succeeded {
-            record(
-                "Synthetic click posted target=\(pointDescription(point)) event=\(pointDescription(eventPoint)) tap=\(tapDescription(tap))"
-            )
-        }
-        return succeeded
-    }
-
-    private func performSyntheticControlLeftClick(at point: CGPoint) -> Bool {
-        let tap: CGEventTapLocation = .cghidEventTap
-        let eventPoint = syntheticMouseEventPoint(for: point)
-        let succeeded = synthesizeMouseClick(
-            at: eventPoint,
-            button: .left,
-            flags: .maskControl,
-            tap: tap
-        )
-        if succeeded {
-            record(
-                "Synthetic control-left posted target=\(pointDescription(point)) event=\(pointDescription(eventPoint)) tap=\(tapDescription(tap))"
-            )
-        }
-        return succeeded
+        return false
     }
 
     private func syntheticMouseEventPoint(for point: CGPoint) -> CGPoint {
@@ -368,8 +502,35 @@ final class InteractionProxy {
         down.flags = flags
         up.flags = flags
         down.post(tap: tap)
+        usleep(40_000)
         up.post(tap: tap)
         return true
+    }
+
+    private func syntheticMouseTaps(forHiddenItem isHiddenItem: Bool) -> [CGEventTapLocation] {
+        if isHiddenItem {
+            return [.cgSessionEventTap, .cgAnnotatedSessionEventTap, .cghidEventTap]
+        }
+
+        return [.cghidEventTap]
+    }
+
+    private func axActionTimeouts(for context: String) -> [Float] {
+        if context.hasPrefix("hidden-") || context.contains("stored-direct") {
+            return hiddenAXActionTimeouts
+        }
+
+        return defaultAXActionTimeouts
+    }
+
+    private func applyAXMessagingTimeout(_ timeout: Float, to element: AXUIElement) {
+        let result = AXUIElementSetMessagingTimeout(element, timeout)
+        if result != .success {
+            record(
+                "AX timeout set failed timeout=\(timeout) error=\(describe(result)) element=\(elementSummary(element))",
+                isError: true
+            )
+        }
     }
 
     private func interactionProbePoints(for item: StatusItemModel) -> [CGPoint] {
@@ -505,7 +666,21 @@ final class InteractionProxy {
             return nil
         }
 
-        return CGRect(origin: position, size: size)
+        return normalizeAccessibilityFrame(CGRect(origin: position, size: size))
+    }
+
+    private func normalizeAccessibilityFrame(_ frame: CGRect) -> CGRect {
+        guard !NSScreen.screens.isEmpty else {
+            return frame
+        }
+
+        let matchingScreens = NSScreen.screens.filter { screen in
+            frame.midX >= screen.frame.minX - 1 && frame.midX <= screen.frame.maxX + 1
+        }
+        let screen = matchingScreens.first ?? NSScreen.screens.first!
+
+        let flippedY = screen.frame.maxY - (frame.minY - screen.frame.minY) - frame.height
+        return CGRect(x: frame.minX, y: flippedY, width: frame.width, height: frame.height)
     }
 
     private func copyElementAttribute(_ attribute: String, from element: AXUIElement) -> AXUIElement? {
@@ -571,6 +746,58 @@ final class InteractionProxy {
             Logger.info(message)
         }
     }
+
+    private func elementSummary(_ element: AXUIElement) -> String {
+        let role = stringAttribute(kAXRoleAttribute as String, from: element) ?? "nil"
+        let subrole = stringAttribute(kAXSubroleAttribute as String, from: element) ?? "nil"
+        let title = stringAttribute(kAXTitleAttribute as String, from: element) ?? "nil"
+        let bundleID = bundleIdentifier(for: element) ?? "nil"
+        let frame = frameAttribute(from: element).map(rectDescription) ?? "nil"
+        return "role=\(role) subrole=\(subrole) title=\(title) bundle=\(bundleID) frame=\(frame)"
+    }
+
+    private func rectDescription(_ rect: CGRect) -> String {
+        "(x:\(Int(rect.minX.rounded())) y:\(Int(rect.minY.rounded())) w:\(Int(rect.width.rounded())) h:\(Int(rect.height.rounded())))"
+    }
+
+    private func describe(_ error: AXError) -> String {
+        switch error {
+        case .success:
+            return "success"
+        case .failure:
+            return "failure"
+        case .illegalArgument:
+            return "illegalArgument"
+        case .invalidUIElement:
+            return "invalidUIElement"
+        case .invalidUIElementObserver:
+            return "invalidUIElementObserver"
+        case .cannotComplete:
+            return "cannotComplete"
+        case .attributeUnsupported:
+            return "attributeUnsupported"
+        case .actionUnsupported:
+            return "actionUnsupported"
+        case .notificationUnsupported:
+            return "notificationUnsupported"
+        case .notImplemented:
+            return "notImplemented"
+        case .notificationAlreadyRegistered:
+            return "notificationAlreadyRegistered"
+        case .notificationNotRegistered:
+            return "notificationNotRegistered"
+        case .apiDisabled:
+            return "apiDisabled"
+        case .noValue:
+            return "noValue"
+        case .parameterizedAttributeUnsupported:
+            return "parameterizedAttributeUnsupported"
+        case .notEnoughPrecision:
+            return "notEnoughPrecision"
+        @unknown default:
+            return "unknown(\(error.rawValue))"
+        }
+    }
 }
 
 private struct ResolvedAXTarget {
@@ -582,4 +809,22 @@ private struct ResolvedAXTarget {
 private enum AXAction: String {
     case press = "AXPress"
     case showMenu = "AXShowMenu"
+}
+
+struct InteractionExecutionResult {
+    var succeeded = false
+    var isHiddenItem = false
+    var usedSyntheticMouseFallback = false
+    var usedControlLeftFallback = false
+    var usedAXAction = false
+    var usedResolvedAXTarget = false
+    var usedStoredDirectAXTarget = false
+
+    init(isHiddenItem: Bool = false) {
+        self.isHiddenItem = isHiddenItem
+    }
+
+    var shouldSuppressAutomaticRefresh: Bool {
+        succeeded && isHiddenItem && (usedSyntheticMouseFallback || usedControlLeftFallback)
+    }
 }

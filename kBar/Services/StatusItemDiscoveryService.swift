@@ -6,6 +6,7 @@ struct DiscoveryResult {
     let items: [StatusItemModel]
     let menuBarFrame: CGRect
     let diagnostics: [String]
+    let hiddenDiagnostics: [String]
 }
 
 private struct ScreenshotFallbackResult {
@@ -24,8 +25,70 @@ private struct CandidateScanRegion {
     let mode: String
 }
 
+private struct HiddenProbeNode {
+    let element: AXUIElement
+    let probeSource: String
+    let title: String
+    let role: String
+    let subrole: String?
+    let frame: CGRect?
+    let ownerName: String?
+    let bundleID: String?
+    let path: String
+    let parentRoles: [String]
+    let actions: [String]
+    let classification: String
+
+    var isAppleOwned: Bool {
+        guard let bundleID else {
+            return false
+        }
+        return bundleID.hasPrefix("com.apple.")
+    }
+
+    var hasKnownOwner: Bool {
+        bundleID != nil
+    }
+
+    func debugLine(index: Int) -> String {
+        let owner = ownerName ?? "nil"
+        let bundle = bundleID ?? "nil"
+        let subrole = subrole ?? "nil"
+        let safeTitle = title.replacingOccurrences(of: "\n", with: " ")
+        let frameDescription: String
+        if let frame {
+            frameDescription = "(x:\(Int(frame.minX.rounded())) y:\(Int(frame.minY.rounded())) w:\(Int(frame.width.rounded())) h:\(Int(frame.height.rounded())))"
+        } else {
+            frameDescription = "nil"
+        }
+        let actionText = actions.isEmpty ? "nil" : actions.joined(separator: ",")
+        let parentText = parentRoles.isEmpty ? "nil" : parentRoles.prefix(4).joined(separator: ">")
+        return "#\(index) src=\(probeSource) state=\(classification) role=\(role) subrole=\(subrole) owner=\(owner) bundle=\(bundle) title=\(safeTitle) frame=\(frameDescription) actions=\(actionText) parents=\(parentText) path=\(path)"
+    }
+}
+
+private struct HiddenProbeCollectionResult {
+    let systemUIServerStatus: String
+    let visitedNodeCount: Int
+    let nodes: [HiddenProbeNode]
+    let runningApplicationTargetCount: Int
+    let runningApplicationNodeCount: Int
+    let runningApplicationTargetLabels: [String]
+    let systemUIServerRootDiagnostics: [String]
+    let runningApplicationRootDiagnostics: [String]
+}
+
+private struct RunningApplicationHiddenProbeResult {
+    let targetCount: Int
+    let visitedNodeCount: Int
+    let nodes: [HiddenProbeNode]
+    let targetLabels: [String]
+    let rootDiagnostics: [String]
+}
+
 @MainActor
 final class StatusItemDiscoveryService {
+    private let diagnosticsVersion = "2026-04-02-hidden-extras-v2"
     private let screenCaptureService: ScreenCaptureService
 
     init(screenCaptureService: ScreenCaptureService) {
@@ -34,16 +97,42 @@ final class StatusItemDiscoveryService {
 
     func discoverItems(on screen: NSScreen, kBarFrame: CGRect?) -> DiscoveryResult {
         let menuBarFrame = LayoutCoordinator.menuBarFrame(for: screen)
-        guard let capture = screenCaptureService.captureMenuBar(for: screen) else {
-            return DiscoveryResult(items: [], menuBarFrame: menuBarFrame, diagnostics: ["无法截取菜单栏图像。"])
-        }
-
         let scanRegion = preferredScanRegion(in: menuBarFrame, kBarFrame: kBarFrame)
         let accessibilityCandidates = collectCandidates(on: screen, scanRegion: scanRegion)
+        let fallbackVisibleCandidates = accessibilityCandidates.filter { candidate in
+            candidate.frame.intersects(menuBarBand(for: screen))
+        }
+        guard let capture = screenCaptureService.captureMenuBar(for: screen) else {
+            let hiddenProbeCollection = hiddenProbeCollection(
+                on: screen,
+                menuBarFrame: menuBarFrame,
+                scanRegion: scanRegion,
+                visibleCandidates: fallbackVisibleCandidates
+            )
+            let hiddenDiagnostics = hiddenProbeDiagnostics(
+                from: hiddenProbeCollection,
+                menuBarFrame: menuBarFrame,
+                scanRegion: scanRegion,
+                visibleCandidateCount: fallbackVisibleCandidates.count
+            )
+            let hiddenItems = buildHiddenItems(
+                from: hiddenProbeCollection.nodes,
+                capture: nil,
+                screen: screen
+            )
+            return DiscoveryResult(
+                items: hiddenItems,
+                menuBarFrame: menuBarFrame,
+                diagnostics: ["无法截取菜单栏图像。", "hiddenItemsBuilt=\(hiddenItems.count)"],
+                hiddenDiagnostics: hiddenDiagnostics
+            )
+        }
+
         let screenshotResult = screenshotFallbackCandidates(in: capture, kBarFrame: kBarFrame)
         let screenshotCandidates = screenshotResult.candidates
         let rawCandidates = deduplicate(accessibilityCandidates + screenshotCandidates)
         var diagnostics: [String] = []
+        diagnostics.append("diagnosticsVersion=\(diagnosticsVersion)")
         diagnostics.append("captureImage=\(capture.image.width)x\(capture.image.height) scale=\(String(format: "%.2f", capture.scale))")
         if let exportPath = exportCaptureImage(capture) {
             diagnostics.append("captureExport=\(exportPath)")
@@ -67,16 +156,33 @@ final class StatusItemDiscoveryService {
             kBarFrame: kBarFrame
         )
         let filteredCandidates = filterSnapshots.last?.items ?? []
+        let hiddenProbeCollection = hiddenProbeCollection(
+            on: screen,
+            menuBarFrame: menuBarFrame,
+            scanRegion: scanRegion,
+            visibleCandidates: filteredCandidates
+        )
+        let hiddenDiagnostics = hiddenProbeDiagnostics(
+            from: hiddenProbeCollection,
+            menuBarFrame: menuBarFrame,
+            scanRegion: scanRegion,
+            visibleCandidateCount: filteredCandidates.count
+        )
+        let hiddenProbeEnrichedCandidates = enrichVisibleCandidates(
+            filteredCandidates,
+            usingHiddenProbeNodes: hiddenProbeCollection.nodes
+        )
         let interactionEnrichedCandidates = collapseSpatialDuplicates(
             enrichInteractionTargets(
-            for: filteredCandidates,
-            using: accessibilityCandidates
+                for: hiddenProbeEnrichedCandidates,
+                using: accessibilityCandidates
             )
         )
 
         diagnostics.append(contentsOf: filterSnapshots.map { "\($0.name)=\($0.items.count)" })
         diagnostics.append(contentsOf: diagnosticLines(for: rawCandidates, title: "rawCandidateDetails", limit: 40))
         diagnostics.append(contentsOf: diagnosticLines(for: filteredCandidates, title: "filteredCandidateDetails", limit: 40))
+        diagnostics.append(contentsOf: diagnosticLines(for: hiddenProbeEnrichedCandidates, title: "hiddenProbeEnrichedCandidateDetails", limit: 40))
         diagnostics.append(contentsOf: diagnosticLines(for: interactionEnrichedCandidates, title: "interactionCandidateDetails", limit: 40))
 
         if let annotatedPath = exportAnnotatedCaptureImage(
@@ -87,7 +193,7 @@ final class StatusItemDiscoveryService {
             diagnostics.append("captureAnnotated=\(annotatedPath)")
         }
 
-        let items = interactionEnrichedCandidates.compactMap { candidate -> StatusItemModel? in
+        let visibleItems = interactionEnrichedCandidates.compactMap { candidate -> StatusItemModel? in
             guard let snapshot = screenCaptureService.cropSnapshot(
                 from: capture,
                 screenRect: candidate.frame,
@@ -106,13 +212,27 @@ final class StatusItemDiscoveryService {
                 source: candidate.source,
                 snapshot: snapshot,
                 isVisibleInMenuBar: true,
-                role: candidate.role
+                role: candidate.role,
+                directAXElement: candidate.directAXElement
             )
         }
+        let hiddenItems = buildHiddenItems(
+            from: hiddenProbeCollection.nodes,
+            capture: capture,
+            screen: screen
+        )
+        let items = visibleItems + hiddenItems
 
         Logger.info("Discovered \(items.count) menu bar items")
         diagnostics.append("snapshotsBuilt=\(items.count)")
-        return DiscoveryResult(items: items, menuBarFrame: menuBarFrame, diagnostics: diagnostics)
+        diagnostics.append("hiddenItemsBuilt=\(hiddenItems.count)")
+        diagnostics.append(contentsOf: itemDiagnosticLines(for: items, title: "finalItemDetails", limit: 40))
+        return DiscoveryResult(
+            items: items,
+            menuBarFrame: menuBarFrame,
+            diagnostics: diagnostics,
+            hiddenDiagnostics: hiddenDiagnostics
+        )
     }
 
     private func buildFilterSnapshots(
@@ -359,6 +479,113 @@ final class StatusItemDiscoveryService {
         }
     }
 
+    private func enrichVisibleCandidates(
+        _ candidates: [DiscoveredCandidate],
+        usingHiddenProbeNodes nodes: [HiddenProbeNode]
+    ) -> [DiscoveredCandidate] {
+        let actionableNodes = nodes.filter { node in
+            guard node.probeSource == "runningAppExtras" else {
+                return false
+            }
+            guard node.classification == "visibleMatched" || node.classification == "withinScanRegion" else {
+                return false
+            }
+            guard let frame = node.frame,
+                  frame.width >= 6,
+                  frame.height >= 6
+            else {
+                return false
+            }
+            guard ["AXMenuBarItem", "AXMenuButton", "AXPopUpButton", "AXButton"].contains(node.role) else {
+                return false
+            }
+            guard hiddenNodeBundleIdentifier(node) != Bundle.main.bundleIdentifier else {
+                return false
+            }
+            return true
+        }
+
+        return candidates.map { candidate in
+            guard candidate.source == .screenshot else {
+                return candidate
+            }
+            guard let matched = bestHiddenProbeMatch(for: candidate, in: actionableNodes),
+                  let accessibilityCandidate = discoveredCandidate(from: matched)
+            else {
+                return candidate
+            }
+            return candidate.enrichingInteraction(from: accessibilityCandidate)
+        }
+    }
+
+    private func bestHiddenProbeMatch(
+        for screenshotCandidate: DiscoveredCandidate,
+        in nodes: [HiddenProbeNode]
+    ) -> HiddenProbeNode? {
+        guard !nodes.isEmpty else {
+            return nil
+        }
+
+        let center = CGPoint(x: screenshotCandidate.frame.midX, y: screenshotCandidate.frame.midY)
+        let filtered = nodes.filter { node in
+            guard let frame = node.frame else {
+                return false
+            }
+            let yDistance = abs(frame.midY - center.y)
+            guard yDistance <= 16 else {
+                return false
+            }
+
+            if frame.intersects(screenshotCandidate.frame) {
+                return true
+            }
+
+            return abs(frame.midX - center.x) <= 8
+        }
+
+        guard !filtered.isEmpty else {
+            return nil
+        }
+
+        return filtered.max { lhs, rhs in
+            hiddenProbeMatchScore(lhs, around: screenshotCandidate) < hiddenProbeMatchScore(rhs, around: screenshotCandidate)
+        }
+    }
+
+    private func hiddenProbeMatchScore(
+        _ node: HiddenProbeNode,
+        around screenshotCandidate: DiscoveredCandidate
+    ) -> Int {
+        guard let frame = node.frame else {
+            return Int.min
+        }
+
+        let center = CGPoint(x: screenshotCandidate.frame.midX, y: screenshotCandidate.frame.midY)
+        var score = hiddenNodeScore(node) * 10
+
+        if frame.intersects(screenshotCandidate.frame) {
+            score += 120
+        }
+
+        let distance = hypot(frame.midX - center.x, frame.midY - center.y)
+        score -= Int((distance * 3.0).rounded())
+
+        if node.classification == "visibleMatched" {
+            score += 60
+        }
+
+        if let bundleID = hiddenNodeBundleIdentifier(node),
+           !bundleID.hasPrefix("com.apple.") {
+            score += 20
+        }
+
+        if node.role == "AXMenuBarItem" {
+            score += 16
+        }
+
+        return score
+    }
+
     private func bestAccessibilityMatch(
         for screenshotCandidate: DiscoveredCandidate,
         in accessibilityCandidates: [DiscoveredCandidate]
@@ -483,6 +710,33 @@ final class StatusItemDiscoveryService {
         }
         if candidates.count > limit {
             lines.append("\(title)=truncated \(candidates.count - limit) more")
+        }
+        lines.append("\(title)=end")
+        return lines
+    }
+
+    private func itemDiagnosticLines(
+        for items: [StatusItemModel],
+        title: String,
+        limit: Int
+    ) -> [String] {
+        guard !items.isEmpty else {
+            return ["\(title)=none"]
+        }
+
+        var lines = ["\(title)=begin"]
+        for (index, item) in items.prefix(limit).enumerated() {
+            let bundleID = item.ownerBundleID ?? "nil"
+            let ownerName = item.ownerName ?? "nil"
+            let safeTitle = (item.title ?? "nil").replacingOccurrences(of: "\n", with: " ")
+            let source = item.source.rawValue
+            let visible = item.isVisibleInMenuBar ? "visible" : "hidden"
+            lines.append(
+                "#\(index + 1) state=\(visible) source=\(source) display=\(item.displayName) owner=\(ownerName) bundle=\(bundleID) title=\(safeTitle) frame=(x:\(Int(item.frameInScreen.minX.rounded())) y:\(Int(item.frameInScreen.minY.rounded())) w:\(Int(item.frameInScreen.width.rounded())) h:\(Int(item.frameInScreen.height.rounded())))"
+            )
+        }
+        if items.count > limit {
+            lines.append("\(title)=truncated \(items.count - limit) more")
         }
         lines.append("\(title)=end")
         return lines
@@ -667,7 +921,8 @@ final class StatusItemDiscoveryService {
                 debugPath: "ScreenshotFallback",
                 interactionPoint: nil,
                 looksTextLike: looksTextLike,
-                isMenuBarScoped: true
+                isMenuBarScoped: true,
+                directAXElement: nil
             )
         }
 
@@ -707,6 +962,751 @@ final class StatusItemDiscoveryService {
 
         let anchoredMinX = max(menuBarFrame.minX, anchoredMaxX - scanWidth)
         return CandidateScanRegion(minX: anchoredMinX, maxX: anchoredMaxX, mode: "leftOfKBar")
+    }
+
+    private func hiddenProbeCollection(
+        on screen: NSScreen,
+        menuBarFrame: CGRect,
+        scanRegion: CandidateScanRegion,
+        visibleCandidates: [DiscoveredCandidate]
+    ) -> HiddenProbeCollectionResult {
+        var systemUIServerStatus = "unavailable"
+        var nodes: [HiddenProbeNode] = []
+        var visitedNodeCount = 0
+        var systemUIServerRootDiagnostics: [String] = []
+
+        guard let systemUIServer = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == "com.apple.systemuiserver"
+        }) else {
+            let runningApplicationResult = collectHiddenProbeNodesFromRunningApplications(
+                on: screen,
+                menuBarFrame: menuBarFrame,
+                scanRegion: scanRegion,
+                visibleCandidates: visibleCandidates
+            )
+            return HiddenProbeCollectionResult(
+                systemUIServerStatus: systemUIServerStatus,
+                visitedNodeCount: runningApplicationResult.visitedNodeCount,
+                nodes: runningApplicationResult.nodes,
+                runningApplicationTargetCount: runningApplicationResult.targetCount,
+                runningApplicationNodeCount: runningApplicationResult.nodes.count,
+                runningApplicationTargetLabels: runningApplicationResult.targetLabels,
+                systemUIServerRootDiagnostics: ["hiddenProbe.systemUIServer.appMissing=true"],
+                runningApplicationRootDiagnostics: runningApplicationResult.rootDiagnostics
+            )
+        }
+
+        let appElement = AXUIElementCreateApplication(systemUIServer.processIdentifier)
+        if let root = resolvedMenuBarElement(from: appElement) ?? resolvedRootElement(from: appElement) {
+            systemUIServerStatus = "ok"
+            let protectedSystemRegionMinX = menuBarFrame.maxX - reservedSystemTrailingWidth(in: menuBarFrame)
+            nodes.append(
+                contentsOf: collectHiddenProbeNodesRecursively(
+                    from: root,
+                    probeSource: "systemUIServer",
+                    path: "SystemUIServerHiddenProbe",
+                    depth: 0,
+                    screen: screen,
+                    menuBarFrame: menuBarFrame,
+                    scanRegion: scanRegion,
+                    protectedSystemRegionMinX: protectedSystemRegionMinX,
+                    visibleCandidates: visibleCandidates,
+                    visitedNodeCount: &visitedNodeCount
+                )
+            )
+        } else {
+            systemUIServerStatus = "missingRoot"
+            systemUIServerRootDiagnostics = hiddenProbeRootDiagnostics(
+                for: appElement,
+                label: "hiddenProbe.systemUIServerRoot"
+            )
+        }
+
+        let runningApplicationResult = collectHiddenProbeNodesFromRunningApplications(
+            on: screen,
+            menuBarFrame: menuBarFrame,
+            scanRegion: scanRegion,
+            visibleCandidates: visibleCandidates
+        )
+        nodes.append(contentsOf: runningApplicationResult.nodes)
+        visitedNodeCount += runningApplicationResult.visitedNodeCount
+
+        return HiddenProbeCollectionResult(
+            systemUIServerStatus: systemUIServerStatus,
+            visitedNodeCount: visitedNodeCount,
+            nodes: nodes,
+            runningApplicationTargetCount: runningApplicationResult.targetCount,
+            runningApplicationNodeCount: runningApplicationResult.nodes.count,
+            runningApplicationTargetLabels: runningApplicationResult.targetLabels,
+            systemUIServerRootDiagnostics: systemUIServerRootDiagnostics,
+            runningApplicationRootDiagnostics: runningApplicationResult.rootDiagnostics
+        )
+    }
+
+    private func hiddenProbeDiagnostics(
+        from collection: HiddenProbeCollectionResult,
+        menuBarFrame: CGRect,
+        scanRegion: CandidateScanRegion,
+        visibleCandidateCount: Int
+    ) -> [String] {
+        let runningAppTargetLabels = collection.runningApplicationTargetLabels.joined(separator: ",")
+
+        guard collection.systemUIServerStatus == "ok" || collection.runningApplicationNodeCount > 0 else {
+            return [
+                "hiddenProbe=begin",
+                "hiddenProbe.systemUIServer=\(collection.systemUIServerStatus)",
+                "hiddenProbe.runningAppTargets=\(collection.runningApplicationTargetCount)",
+                "hiddenProbe.runningAppNodes=\(collection.runningApplicationNodeCount)",
+                "hiddenProbe.runningAppTargetLabels=\(runningAppTargetLabels)",
+                "hiddenProbe=end",
+            ]
+        }
+
+        let nodes = collection.nodes
+        let appleOwnedCount = nodes.filter(\.isAppleOwned).count
+        let nonAppleOwnedCount = nodes.filter { node in
+            node.hasKnownOwner && !node.isAppleOwned
+        }.count
+        let unknownOwnerCount = nodes.filter { !$0.hasKnownOwner }.count
+        let visibleMatchedCount = nodes.filter { $0.classification == "visibleMatched" }.count
+        let withinScanCount = nodes.filter { $0.classification == "withinScanRegion" }.count
+        let outsideScanCount = nodes.filter { $0.classification.hasPrefix("outsideScanRegion") }.count
+        let protectedTrailingCount = nodes.filter { $0.classification == "protectedTrailingRegion" }.count
+        let offMenuBarCount = nodes.filter { $0.classification == "offMenuBarBand" }.count
+        let zeroSizeCount = nodes.filter { $0.classification == "zeroSize" }.count
+        let missingFrameCount = nodes.filter { $0.classification == "missingFrame" }.count
+
+        let potentialHiddenNodes = nodes
+            .filter { node in
+                hiddenProbePriority(node.classification) >= 3
+            }
+            .sorted(by: hiddenProbeSort)
+        let outsideScanNodes = nodes
+            .filter { $0.classification.hasPrefix("outsideScanRegion") || $0.classification == "protectedTrailingRegion" }
+            .sorted(by: hiddenProbeSort)
+
+        var diagnostics: [String] = [
+            "hiddenProbe=begin",
+            "hiddenProbe.diagnosticsVersion=\(diagnosticsVersion)",
+            "hiddenProbe.systemUIServer=\(collection.systemUIServerStatus)",
+            "hiddenProbe.runningAppTargets=\(collection.runningApplicationTargetCount)",
+            "hiddenProbe.runningAppNodes=\(collection.runningApplicationNodeCount)",
+            "hiddenProbe.runningAppTargetLabels=\(runningAppTargetLabels)",
+            "hiddenProbe.scanRegion=min:\(Int(scanRegion.minX)) max:\(Int(scanRegion.maxX)) mode:\(scanRegion.mode)",
+            "hiddenProbe.menuBarFrame=x:\(Int(menuBarFrame.minX)) y:\(Int(menuBarFrame.minY)) w:\(Int(menuBarFrame.width)) h:\(Int(menuBarFrame.height))",
+            "hiddenProbe.visibleCandidates=\(visibleCandidateCount)",
+            "hiddenProbe.visitedNodes=\(collection.visitedNodeCount)",
+            "hiddenProbe.interestingNodes=\(nodes.count)",
+            "hiddenProbe.appleOwnedNodes=\(appleOwnedCount)",
+            "hiddenProbe.nonAppleOwnedNodes=\(nonAppleOwnedCount)",
+            "hiddenProbe.unknownOwnerNodes=\(unknownOwnerCount)",
+            "hiddenProbe.visibleMatched=\(visibleMatchedCount)",
+            "hiddenProbe.withinScanRegion=\(withinScanCount)",
+            "hiddenProbe.outsideScanRegion=\(outsideScanCount)",
+            "hiddenProbe.protectedTrailingRegion=\(protectedTrailingCount)",
+            "hiddenProbe.offMenuBarBand=\(offMenuBarCount)",
+            "hiddenProbe.zeroSize=\(zeroSizeCount)",
+            "hiddenProbe.missingFrame=\(missingFrameCount)",
+        ]
+        diagnostics.append(contentsOf: collection.systemUIServerRootDiagnostics)
+        diagnostics.append(contentsOf: collection.runningApplicationRootDiagnostics)
+        diagnostics.append(
+            contentsOf: hiddenProbeLines(
+                for: nodes.filter { $0.probeSource == "runningAppExtras" }.sorted(by: hiddenProbeSort),
+                title: "hiddenProbeRunningAppExtraDetails",
+                limit: 40
+            )
+        )
+        diagnostics.append(
+            contentsOf: hiddenProbeLines(
+                for: deduplicateHiddenNodes(nodes.filter(shouldPromoteHiddenNode)).sorted(by: hiddenProbeSort),
+                title: "hiddenProbePromotedDetails",
+                limit: 20
+            )
+        )
+        diagnostics.append(contentsOf: hiddenProbeLines(for: potentialHiddenNodes, title: "hiddenProbePotentialDetails", limit: 40))
+        diagnostics.append(contentsOf: hiddenProbeLines(for: outsideScanNodes, title: "hiddenProbeOutsideScanDetails", limit: 20))
+        diagnostics.append("hiddenProbe=end")
+        return diagnostics
+    }
+
+    private func buildHiddenItems(
+        from nodes: [HiddenProbeNode],
+        capture: MenuBarCapture?,
+        screen: NSScreen
+    ) -> [StatusItemModel] {
+        let promotedNodes = deduplicateHiddenNodes(nodes.filter(shouldPromoteHiddenNode))
+
+        return promotedNodes.compactMap { node in
+            let snapshot = hiddenSnapshot(for: node, capture: capture, screen: screen) ?? genericHiddenSnapshot()
+            let frame = node.frame ?? .zero
+            let interactionPoint = node.frame.map { CGPoint(x: $0.midX, y: $0.midY) } ?? .zero
+
+            return StatusItemModel(
+                id: UUID(),
+                ownerBundleID: hiddenNodeBundleIdentifier(node),
+                ownerName: hiddenNodeOwnerName(node),
+                title: node.title,
+                frameInScreen: frame,
+                interactionPoint: interactionPoint,
+                source: .accessibility,
+                snapshot: snapshot,
+                isVisibleInMenuBar: false,
+                role: node.role,
+                directAXElement: node.element
+            )
+        }
+    }
+
+    private func shouldPromoteHiddenNode(_ node: HiddenProbeNode) -> Bool {
+        if hiddenNodeBundleIdentifier(node) == Bundle.main.bundleIdentifier {
+            return false
+        }
+
+        switch node.classification {
+        case "outsideScanRegion[left]", "missingFrame", "zeroSize":
+            break
+        case "withinScanRegion":
+            guard node.probeSource == "runningAppExtras" else {
+                return false
+            }
+        default:
+            return false
+        }
+
+        let trimmedTitle = node.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if node.probeSource == "runningApp" || node.probeSource == "runningAppExtras" {
+            guard ["AXMenuBarItem", "AXMenuButton", "AXPopUpButton", "AXButton"].contains(node.role) else {
+                return false
+            }
+            guard !node.parentRoles.contains("AXMenu") else {
+                return false
+            }
+            if node.probeSource == "runningApp",
+               node.parentRoles.contains("AXMenuBar"),
+               node.subrole != "AXMenuExtra" {
+                return false
+            }
+            if trimmedTitle.caseInsensitiveCompare("Apple") == .orderedSame {
+                return false
+            }
+            if node.probeSource == "runningApp",
+               let ownerName = hiddenNodeOwnerName(node),
+               trimmedTitle.caseInsensitiveCompare(ownerName) == .orderedSame {
+                return false
+            }
+            if looksLikeApplicationMainMenuTitle(trimmedTitle) {
+                return false
+            }
+        } else if trimmedTitle.isEmpty {
+            return false
+        }
+
+        if node.role == "AXUnknown", node.actions.isEmpty {
+            return false
+        }
+
+        if node.role == "AXMenuBar" || node.role == "AXGroup" || node.role == "AXMenu" || node.role == "AXMenuItem" {
+            return false
+        }
+
+        return true
+    }
+
+    private func deduplicateHiddenNodes(_ nodes: [HiddenProbeNode]) -> [HiddenProbeNode] {
+        var buckets: [String: HiddenProbeNode] = [:]
+
+        for node in nodes {
+            let key = hiddenNodeKey(node)
+            if let existing = buckets[key] {
+                if hiddenNodeScore(node) > hiddenNodeScore(existing) {
+                    buckets[key] = node
+                }
+            } else {
+                buckets[key] = node
+            }
+        }
+
+        return Array(buckets.values)
+    }
+
+    private func hiddenNodeKey(_ node: HiddenProbeNode) -> String {
+        let bundleKey = hiddenNodeBundleIdentifier(node) ?? hiddenNodeOwnerName(node) ?? "nil"
+        let titleKey = node.title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let frameKey = node.frame.map {
+            "\(Int($0.minX.rounded()))-\(Int($0.width.rounded()))"
+        } ?? node.classification
+        return "\(bundleKey)|\(titleKey)|\(frameKey)"
+    }
+
+    private func hiddenNodeScore(_ node: HiddenProbeNode) -> Int {
+        var score = 0
+
+        switch node.role {
+        case "AXMenuBarItem":
+            score += 12
+        case "AXMenuButton", "AXPopUpButton":
+            score += 10
+        case "AXButton":
+            score += 8
+        default:
+            score += 2
+        }
+
+        if node.actions.contains("AXPress") {
+            score += 6
+        }
+        if node.actions.contains("AXShowMenu") {
+            score += 4
+        }
+        if node.parentRoles.contains("AXMenuBar") {
+            score += 5
+        }
+        if node.parentRoles.contains("AXMenuBarItem") {
+            score += 2
+        }
+        if node.frame == nil {
+            score += 3
+        }
+        if node.classification == "outsideScanRegion[left]" {
+            score += 3
+        }
+        if node.classification == "missingFrame" || node.classification == "zeroSize" {
+            score += 2
+        }
+        score -= node.path.components(separatedBy: "/").count
+        return score
+    }
+
+    private func hiddenSnapshot(
+        for node: HiddenProbeNode,
+        capture: MenuBarCapture?,
+        screen: NSScreen
+    ) -> NSImage? {
+        if let bundleID = hiddenNodeBundleIdentifier(node),
+           let appIcon = appIconSnapshot(bundleID: bundleID) {
+            return appIcon
+        }
+
+        if let capture,
+           let frame = node.frame,
+           frame.width > 0,
+           frame.height > 0,
+           frame.intersects(menuBarBand(for: screen)),
+           let snapshot = screenCaptureService.cropSnapshot(
+                from: capture,
+                screenRect: frame,
+                source: .accessibility
+           ) {
+            return snapshot
+        }
+
+        return nil
+    }
+
+    private func hiddenNodeBundleIdentifier(_ node: HiddenProbeNode) -> String? {
+        guard let bundleID = node.bundleID,
+              bundleID != "com.apple.systemuiserver"
+        else {
+            return nil
+        }
+        return bundleID
+    }
+
+    private func hiddenNodeOwnerName(_ node: HiddenProbeNode) -> String? {
+        if let ownerName = node.ownerName,
+           ownerName != "SystemUIServer" {
+            return ownerName
+        }
+        return nil
+    }
+
+    private func appIconSnapshot(bundleID: String) -> NSImage? {
+        if let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
+           let icon = runningApp.icon {
+            return icon
+        }
+
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            return NSWorkspace.shared.icon(forFile: appURL.path)
+        }
+
+        return nil
+    }
+
+    private func genericHiddenSnapshot() -> NSImage {
+        if let image = NSImage(
+            systemSymbolName: "questionmark.square.dashed",
+            accessibilityDescription: "Hidden Menu Bar Item"
+        ) {
+            return image
+        }
+
+        return NSImage(size: NSSize(width: 18, height: 18))
+    }
+
+    private func collectHiddenProbeNodesFromRunningApplications(
+        on screen: NSScreen,
+        menuBarFrame: CGRect,
+        scanRegion: CandidateScanRegion,
+        visibleCandidates: [DiscoveredCandidate]
+    ) -> RunningApplicationHiddenProbeResult {
+        let protectedSystemRegionMinX = menuBarFrame.maxX - reservedSystemTrailingWidth(in: menuBarFrame)
+        let targets = hiddenProbeRunningApplicationTargets()
+        var visitedNodeCount = 0
+        var nodes: [HiddenProbeNode] = []
+        var targetLabels: [String] = []
+        var rootDiagnostics: [String] = []
+
+        for app in targets {
+            let appElement = AXUIElementCreateApplication(app.processIdentifier)
+            let appLabel = hiddenProbeApplicationLabel(app)
+            targetLabels.append(appLabel)
+            rootDiagnostics.append(
+                contentsOf: hiddenProbeRootDiagnostics(
+                    for: appElement,
+                    label: "hiddenProbe.runningAppRoot[\(appLabel)]"
+                )
+            )
+            let extraRoots = runningApplicationExtraMenuBarRoots(from: appElement)
+            rootDiagnostics.append("hiddenProbe.runningAppRoot[\(appLabel)].extraRootCount=\(extraRoots.count)")
+            nodes.append(
+                contentsOf: extraRoots.enumerated().flatMap { index, extraRoot in
+                    collectHiddenProbeNodesRecursively(
+                        from: extraRoot,
+                        probeSource: "runningAppExtras",
+                        path: "RunningAppExtra[\(appLabel)]/\(index)",
+                        depth: 0,
+                        screen: screen,
+                        menuBarFrame: menuBarFrame,
+                        scanRegion: scanRegion,
+                        protectedSystemRegionMinX: protectedSystemRegionMinX,
+                        visibleCandidates: visibleCandidates,
+                        visitedNodeCount: &visitedNodeCount
+                    )
+                }
+            )
+        }
+
+        return RunningApplicationHiddenProbeResult(
+            targetCount: targets.count,
+            visitedNodeCount: visitedNodeCount,
+            nodes: nodes,
+            targetLabels: targetLabels,
+            rootDiagnostics: rootDiagnostics
+        )
+    }
+
+    private func runningApplicationExtraMenuBarRoots(from appElement: AXUIElement) -> [AXUIElement] {
+        var roots: [AXUIElement] = []
+
+        func appendUnique(_ candidate: AXUIElement) {
+            if roots.contains(where: { CFEqual($0, candidate) }) {
+                return
+            }
+            roots.append(candidate)
+        }
+
+        if let extrasMenuBar = copyElementAttribute("AXExtrasMenuBar", from: appElement) {
+            appendUnique(extrasMenuBar)
+        }
+
+        for child in arrayAttribute(kAXChildrenAttribute as String, from: appElement) {
+            if isLikelyExtraMenuBarRoot(child) {
+                appendUnique(child)
+            }
+        }
+
+        return roots
+    }
+
+    private func isLikelyExtraMenuBarRoot(_ element: AXUIElement) -> Bool {
+        guard stringAttribute(kAXRoleAttribute as String, from: element) == "AXMenuBar" else {
+            return false
+        }
+
+        let childCount = arrayAttribute(kAXChildrenAttribute as String, from: element).count
+        guard childCount > 0, childCount <= 4 else {
+            return false
+        }
+
+        guard let frame = frameAttribute(from: element) else {
+            return true
+        }
+
+        return frame.width > 0 && frame.width <= 220 && frame.height > 0 && frame.height <= 40
+    }
+
+    private func hiddenProbeRunningApplicationTargets() -> [NSRunningApplication] {
+        NSWorkspace.shared.runningApplications.filter { app in
+            guard app.processIdentifier > 0 else {
+                return false
+            }
+            guard !app.isTerminated else {
+                return false
+            }
+            guard app.bundleIdentifier != Bundle.main.bundleIdentifier else {
+                return false
+            }
+            guard app.bundleIdentifier != "com.apple.systemuiserver" else {
+                return false
+            }
+            guard let bundleID = app.bundleIdentifier else {
+                return false
+            }
+            if bundleID.hasPrefix("com.apple.") {
+                return false
+            }
+
+            switch app.activationPolicy {
+            case .accessory, .prohibited, .regular:
+                return true
+            @unknown default:
+                return false
+            }
+        }
+        .sorted { lhs, rhs in
+            hiddenProbeApplicationLabel(lhs).localizedCaseInsensitiveCompare(hiddenProbeApplicationLabel(rhs)) == .orderedAscending
+        }
+    }
+
+    private func hiddenProbeApplicationLabel(_ app: NSRunningApplication) -> String {
+        let base = app.bundleIdentifier ?? app.localizedName ?? "pid\(app.processIdentifier)"
+        return base.replacingOccurrences(of: "/", with: "_")
+    }
+
+    private func collectHiddenProbeNodesRecursively(
+        from element: AXUIElement,
+        probeSource: String,
+        path: String,
+        depth: Int,
+        screen: NSScreen,
+        menuBarFrame: CGRect,
+        scanRegion: CandidateScanRegion,
+        protectedSystemRegionMinX: CGFloat,
+        visibleCandidates: [DiscoveredCandidate],
+        visitedNodeCount: inout Int
+    ) -> [HiddenProbeNode] {
+        guard depth <= 8 else {
+            return []
+        }
+
+        visitedNodeCount += 1
+
+        let role = stringAttribute(kAXRoleAttribute as String, from: element) ?? "AXUnknown"
+        let subrole = stringAttribute(kAXSubroleAttribute as String, from: element)
+        let actions = actionNames(for: element)
+        let parentRoles = ancestorRoles(for: element, limit: 8)
+        let frame = frameAttribute(from: element)
+        let owner = ownerProcessInfo(for: element)
+        let title = preferredTitle(for: element) ?? owner.processName ?? role
+
+        var collected: [HiddenProbeNode] = []
+        if shouldIncludeInHiddenProbe(
+            role: role,
+            subrole: subrole,
+            actions: actions,
+            parentRoles: parentRoles,
+            probeSource: probeSource
+        ) {
+            let classification = classifyHiddenProbeNode(
+                frame: frame,
+                screen: screen,
+                menuBarFrame: menuBarFrame,
+                scanRegion: scanRegion,
+                protectedSystemRegionMinX: protectedSystemRegionMinX,
+                visibleCandidates: visibleCandidates
+            )
+            collected.append(
+                HiddenProbeNode(
+                    element: element,
+                    probeSource: probeSource,
+                    title: title,
+                    role: role,
+                    subrole: subrole,
+                    frame: frame,
+                    ownerName: owner.processName,
+                    bundleID: owner.bundleIdentifier,
+                    path: path,
+                    parentRoles: parentRoles,
+                    actions: actions,
+                    classification: classification
+                )
+            )
+        }
+
+        guard shouldDescendIntoHiddenProbeChildren(
+            role: role,
+            probeSource: probeSource,
+            depth: depth
+        ) else {
+            return collected
+        }
+
+        for (index, child) in arrayAttribute(kAXChildrenAttribute as String, from: element).enumerated() {
+            collected.append(
+                contentsOf: collectHiddenProbeNodesRecursively(
+                    from: child,
+                    probeSource: probeSource,
+                    path: "\(path)/\(index)",
+                    depth: depth + 1,
+                    screen: screen,
+                    menuBarFrame: menuBarFrame,
+                    scanRegion: scanRegion,
+                    protectedSystemRegionMinX: protectedSystemRegionMinX,
+                    visibleCandidates: visibleCandidates,
+                    visitedNodeCount: &visitedNodeCount
+                )
+            )
+        }
+
+        return collected
+    }
+
+    private func shouldIncludeInHiddenProbe(
+        role: String,
+        subrole: String?,
+        actions: [String],
+        parentRoles: [String],
+        probeSource: String
+    ) -> Bool {
+        if probeSource == "runningApp" || probeSource == "runningAppExtras" {
+            if role == "AXMenu" || role == "AXMenuItem" {
+                return false
+            }
+            if role == "AXApplication" || role == "AXMenuBar" {
+                return false
+            }
+        }
+
+        if supportedRoles.contains(role) {
+            return true
+        }
+
+        if subrole == "AXMenuExtra" {
+            return true
+        }
+
+        if parentRoles.contains("AXMenuBar") || parentRoles.contains("AXMenuBarItem") {
+            return true
+        }
+
+        if actions.contains("AXPress") || actions.contains("AXShowMenu") {
+            return true
+        }
+
+        return false
+    }
+
+    private func shouldDescendIntoHiddenProbeChildren(
+        role: String,
+        probeSource: String,
+        depth: Int
+    ) -> Bool {
+        if probeSource == "runningApp" || probeSource == "runningAppExtras" {
+            if role == "AXMenu" || role == "AXMenuItem" || role == "AXMenuBarItem" {
+                return false
+            }
+            if depth >= 4 {
+                return false
+            }
+        }
+
+        return true
+    }
+
+    private func classifyHiddenProbeNode(
+        frame: CGRect?,
+        screen: NSScreen,
+        menuBarFrame: CGRect,
+        scanRegion: CandidateScanRegion,
+        protectedSystemRegionMinX: CGFloat,
+        visibleCandidates: [DiscoveredCandidate]
+    ) -> String {
+        guard let frame else {
+            return "missingFrame"
+        }
+
+        if frame.width <= 0 || frame.height <= 0 {
+            return "zeroSize"
+        }
+
+        if !frame.intersects(menuBarBand(for: screen)) {
+            return "offMenuBarBand"
+        }
+
+        if matchesVisibleCandidate(frame: frame, in: visibleCandidates) {
+            return "visibleMatched"
+        }
+
+        if frame.midX >= protectedSystemRegionMinX || frame.midX >= menuBarFrame.maxX - 4 {
+            return "protectedTrailingRegion"
+        }
+
+        if frame.maxX < scanRegion.minX {
+            return "outsideScanRegion[left]"
+        }
+
+        if frame.minX > scanRegion.maxX {
+            return "outsideScanRegion[right]"
+        }
+
+        return "withinScanRegion"
+    }
+
+    private func matchesVisibleCandidate(
+        frame: CGRect,
+        in visibleCandidates: [DiscoveredCandidate]
+    ) -> Bool {
+        visibleCandidates.contains { candidate in
+            candidate.frame.insetBy(dx: -8, dy: -6).intersects(frame)
+        }
+    }
+
+    private func hiddenProbeLines(
+        for nodes: [HiddenProbeNode],
+        title: String,
+        limit: Int
+    ) -> [String] {
+        var lines = ["\(title)=begin"]
+        for (index, node) in nodes.prefix(limit).enumerated() {
+            lines.append(node.debugLine(index: index + 1))
+        }
+        if nodes.count > limit {
+            lines.append("\(title)=truncated \(nodes.count - limit) more")
+        }
+        lines.append("\(title)=end")
+        return lines
+    }
+
+    private func hiddenProbePriority(_ classification: String) -> Int {
+        switch classification {
+        case "missingFrame":
+            return 5
+        case "zeroSize":
+            return 4
+        case "offMenuBarBand":
+            return 3
+        case "protectedTrailingRegion":
+            return 2
+        case "outsideScanRegion[left]", "outsideScanRegion[right]":
+            return 1
+        default:
+            return 0
+        }
+    }
+
+    private func hiddenProbeSort(lhs: HiddenProbeNode, rhs: HiddenProbeNode) -> Bool {
+        let lhsPriority = hiddenProbePriority(lhs.classification)
+        let rhsPriority = hiddenProbePriority(rhs.classification)
+        if lhsPriority == rhsPriority {
+            let lhsBundle = lhs.bundleID ?? lhs.title
+            let rhsBundle = rhs.bundleID ?? rhs.title
+            return lhsBundle < rhsBundle
+        }
+        return lhsPriority > rhsPriority
     }
 
     private func collectCandidatesRecursively(
@@ -799,7 +1799,29 @@ final class StatusItemDiscoveryService {
             debugPath: debugPath,
             interactionPoint: CGPoint(x: frame.midX, y: frame.midY),
             looksTextLike: false,
-            isMenuBarScoped: isMenuBarScoped(role: role, parentRoles: parentRoles)
+            isMenuBarScoped: isMenuBarScoped(role: role, parentRoles: parentRoles),
+            directAXElement: element
+        )
+    }
+
+    private func discoveredCandidate(from node: HiddenProbeNode) -> DiscoveredCandidate? {
+        guard let frame = node.frame else {
+            return nil
+        }
+
+        return DiscoveredCandidate(
+            title: node.title,
+            role: node.role,
+            frame: frame,
+            ownerName: hiddenNodeOwnerName(node),
+            bundleID: hiddenNodeBundleIdentifier(node),
+            source: .accessibility,
+            score: hiddenNodeScore(node),
+            debugPath: "\(node.path)|hiddenProbe",
+            interactionPoint: CGPoint(x: frame.midX, y: frame.midY),
+            looksTextLike: false,
+            isMenuBarScoped: true,
+            directAXElement: node.element
         )
     }
 
@@ -867,6 +1889,10 @@ final class StatusItemDiscoveryService {
     }
 
     private func resolvedRootElement(from appElement: AXUIElement) -> AXUIElement? {
+        if let extrasMenuBar = copyElementAttribute("AXExtrasMenuBar", from: appElement) {
+            return extrasMenuBar
+        }
+
         if let menuBar = copyElementAttribute(kAXMenuBarAttribute as String, from: appElement) {
             return menuBar
         }
@@ -883,12 +1909,68 @@ final class StatusItemDiscoveryService {
     }
 
     private func resolvedMenuBarElement(from appElement: AXUIElement) -> AXUIElement? {
+        if let extrasMenuBar = copyElementAttribute("AXExtrasMenuBar", from: appElement) {
+            return extrasMenuBar
+        }
+
         if let menuBar = copyElementAttribute(kAXMenuBarAttribute as String, from: appElement) {
             return menuBar
         }
 
         let children = arrayAttribute(kAXChildrenAttribute as String, from: appElement)
         return firstElement(withRole: "AXMenuBar", in: children, depth: 0)
+    }
+
+    private func hiddenProbeRootDiagnostics(
+        for element: AXUIElement,
+        label: String
+    ) -> [String] {
+        let attributes = attributeNames(for: element)
+        let children = arrayAttribute(kAXChildrenAttribute as String, from: element)
+        let menuBar = copyElementAttribute(kAXMenuBarAttribute as String, from: element)
+        let extrasMenuBar = copyElementAttribute("AXExtrasMenuBar", from: element)
+        let attributeList = attributes.prefix(16).joined(separator: ",")
+        let menuBarDescription = menuBar.map { stringAttribute(kAXRoleAttribute as String, from: $0) ?? "present" } ?? "nil"
+        let extrasMenuBarDescription = extrasMenuBar.map { stringAttribute(kAXRoleAttribute as String, from: $0) ?? "present" } ?? "nil"
+
+        var lines: [String] = [
+            "\(label).attributes=\(attributeList)",
+            "\(label).childCount=\(children.count)",
+            "\(label).menuBarAttr=\(menuBarDescription)",
+            "\(label).extrasMenuBarAttr=\(extrasMenuBarDescription)",
+        ]
+
+        for (index, child) in children.prefix(4).enumerated() {
+            let role = stringAttribute(kAXRoleAttribute as String, from: child) ?? "AXUnknown"
+            let subrole = stringAttribute(kAXSubroleAttribute as String, from: child) ?? "nil"
+            let title = preferredTitle(for: child) ?? "nil"
+            let safeTitle = title.replacingOccurrences(of: "\n", with: " ")
+            let childCount = arrayAttribute(kAXChildrenAttribute as String, from: child).count
+            let frameDescription: String
+            if let frame = frameAttribute(from: child) {
+                frameDescription = "x:\(Int(frame.minX.rounded())) y:\(Int(frame.minY.rounded())) w:\(Int(frame.width.rounded())) h:\(Int(frame.height.rounded()))"
+            } else {
+                frameDescription = "nil"
+            }
+            lines.append(
+                "\(label).child#\(index)=role=\(role) subrole=\(subrole) title=\(safeTitle) childCount=\(childCount) frame=\(frameDescription)"
+            )
+        }
+
+        return lines
+    }
+
+    private func looksLikeApplicationMainMenuTitle(_ title: String) -> Bool {
+        let normalized = title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        let commonMenuTitles: Set<String> = [
+            "file", "edit", "view", "window", "help", "format", "action", "services",
+            "文件", "编辑", "查看", "窗口", "帮助", "格式", "显示", "快捷键",
+        ]
+
+        return commonMenuTitles.contains(normalized)
     }
 
     private func firstCandidateContainer(in elements: [AXUIElement], depth: Int) -> AXUIElement? {
@@ -1483,7 +2565,21 @@ final class StatusItemDiscoveryService {
             return nil
         }
 
-        return CGRect(origin: position, size: size)
+        return normalizeAccessibilityFrame(CGRect(origin: position, size: size))
+    }
+
+    private func normalizeAccessibilityFrame(_ frame: CGRect) -> CGRect {
+        guard !NSScreen.screens.isEmpty else {
+            return frame
+        }
+
+        let matchingScreens = NSScreen.screens.filter { screen in
+            frame.midX >= screen.frame.minX - 1 && frame.midX <= screen.frame.maxX + 1
+        }
+        let screen = matchingScreens.first ?? NSScreen.screens.first!
+
+        let flippedY = screen.frame.maxY - (frame.minY - screen.frame.minY) - frame.height
+        return CGRect(x: frame.minX, y: flippedY, width: frame.width, height: frame.height)
     }
 
     private func elementAtPosition(_ element: AXUIElement, x: CGFloat, y: CGFloat) -> AXUIElement? {
@@ -1540,6 +2636,15 @@ final class StatusItemDiscoveryService {
         return value
     }
 
+    private func attributeNames(for element: AXUIElement) -> [String] {
+        var names: CFArray?
+        let error = AXUIElementCopyAttributeNames(element, &names)
+        guard error == .success, let names = names as? [String] else {
+            return []
+        }
+        return names
+    }
+
     private let supportedRoles: Set<String> = [
         "AXMenuBarItem",
         "AXButton",
@@ -1560,6 +2665,7 @@ private struct DiscoveredCandidate {
     let interactionPoint: CGPoint?
     let looksTextLike: Bool
     let isMenuBarScoped: Bool
+    let directAXElement: AXUIElement?
 
     var deduplicationKey: String {
         let frameKey = "\(Int(frame.minX.rounded()))-\(Int(frame.width.rounded()))"
@@ -1589,7 +2695,8 @@ private struct DiscoveredCandidate {
             debugPath: debugPath,
             interactionPoint: point,
             looksTextLike: looksTextLike,
-            isMenuBarScoped: isMenuBarScoped
+            isMenuBarScoped: isMenuBarScoped,
+            directAXElement: directAXElement
         )
     }
 
@@ -1609,7 +2716,8 @@ private struct DiscoveredCandidate {
             debugPath: "\(debugPath)|matched:\(candidate.source.rawValue)",
             interactionPoint: candidate.interactionPoint ?? CGPoint(x: candidate.frame.midX, y: candidate.frame.midY),
             looksTextLike: looksTextLike,
-            isMenuBarScoped: isMenuBarScoped || candidate.isMenuBarScoped
+            isMenuBarScoped: isMenuBarScoped || candidate.isMenuBarScoped,
+            directAXElement: directAXElement ?? candidate.directAXElement
         )
     }
 }

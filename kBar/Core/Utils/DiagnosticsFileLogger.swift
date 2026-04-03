@@ -6,6 +6,7 @@ enum DiagnosticsFileLogger {
     private static let eventsURL = baseURL.appendingPathComponent("kbar-events.log")
     private static let latestScanURL = baseURL.appendingPathComponent("kbar-scan-latest.log")
     private static let latestInteractionURL = baseURL.appendingPathComponent("kbar-interaction-latest.log")
+    private static let latestHiddenDiscoveryURL = baseURL.appendingPathComponent("kbar-hidden-discovery-latest.log")
     private static let queue = DispatchQueue(label: "com.zhouzekun.kbar.diagnostics-file")
 
     static func appendRuntimeLog(level: String, message: String) {
@@ -64,6 +65,7 @@ enum DiagnosticsFileLogger {
             "interaction=\(describe(interaction))",
             "succeeded=\(succeeded)",
             "source=\(item.source.rawValue)",
+            "visibleInMenuBar=\(item.isVisibleInMenuBar)",
             "frame=\(rectDescription(item.frameInScreen))",
             "interactionPoint=\(pointDescription(item.interactionPoint))",
             "bundleID=\(item.ownerBundleID ?? "nil")",
@@ -80,6 +82,32 @@ enum DiagnosticsFileLogger {
                 "item=\(item.displayName)",
                 "interaction=\(describe(interaction))",
                 "succeeded=\(succeeded)",
+                "lastError=\(lastError ?? "nil")",
+            ] + diagnostics
+        )
+    }
+
+    static func recordHiddenDiscoverySnapshot(
+        reason: String,
+        permissions: PermissionStatus,
+        diagnostics: [String],
+        lastError: String?
+    ) {
+        var lines: [String] = [
+            "timestamp=\(timestamp())",
+            "reason=\(reason)",
+            "permissions=ax:\(permissions.accessibilityGranted) screen:\(permissions.screenCaptureGranted)",
+            "lastError=\(lastError ?? "nil")",
+            "diagnostics=begin",
+        ]
+        lines.append(contentsOf: diagnostics)
+        lines.append("diagnostics=end")
+
+        writeLatest(lines.joined(separator: "\n") + "\n", to: latestHiddenDiscoveryURL)
+        appendEventBlock(
+            title: "hidden-discovery",
+            lines: [
+                "reason=\(reason)",
                 "lastError=\(lastError ?? "nil")",
             ] + diagnostics
         )

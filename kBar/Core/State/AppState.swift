@@ -7,6 +7,7 @@ final class AppState: ObservableObject {
     @Published var items: [StatusItemModel] = []
     @Published var scanDiagnostics: [String] = []
     @Published var interactionDiagnostics: [String] = []
+    @Published var hiddenDiscoveryDiagnostics: [String] = []
     @Published var permissions = PermissionStatus()
     @Published var autoRefreshEnabled = true
     @Published var keepPanelOpenAfterInteraction = false

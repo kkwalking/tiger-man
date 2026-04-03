@@ -7,6 +7,8 @@ struct SettingsView: View {
 
     @State
     private var showScanDiagnostics = false
+    @State
+    private var showHiddenDiagnostics = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -92,6 +94,46 @@ struct SettingsView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     } else {
                         Text("默认收起，排查识别问题时再展开。")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if !appState.hiddenDiscoveryDiagnostics.isEmpty {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("隐藏图标诊断")
+                            .font(.system(size: 14, weight: .semibold))
+                        Spacer()
+                        Button(showHiddenDiagnostics ? "收起" : "展开") {
+                            showHiddenDiagnostics.toggle()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    }
+
+                    if showHiddenDiagnostics {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(Array(appState.hiddenDiscoveryDiagnostics.enumerated()), id: \.offset) { _, line in
+                                    Text(line)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                        .frame(height: 180)
+                        .padding(10)
+                        .background(Color.black.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    } else {
+                        Text("默认收起，排查隐藏图标发现问题时再展开。")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }

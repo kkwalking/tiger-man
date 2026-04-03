@@ -33,6 +33,8 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
 
     private var refreshTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
+    private var automaticRefreshSuppressedUntil: Date?
+    private let automaticRefreshSuppressionDuration: TimeInterval = 5.0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Logger.info("Application launched")
@@ -169,6 +171,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             }
 
             let succeeded = self.interactionProxy.perform(interaction, on: item)
+            let interactionResult = self.interactionProxy.latestInteractionResult()
             self.appState.interactionDiagnostics = self.interactionProxy.latestInteractionTrace()
             if !succeeded {
                 self.appState.lastError = "未能触发 \(item.displayName) 的原始操作。"
@@ -181,8 +184,20 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
                 lastError: self.appState.lastError
             )
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                self?.refreshNow(reason: "post-interaction")
+            if interactionResult.shouldSuppressAutomaticRefresh {
+                let until = Date().addingTimeInterval(self.automaticRefreshSuppressionDuration)
+                self.automaticRefreshSuppressedUntil = until
+                Logger.info(
+                    "Suppress automatic refresh after interaction item=\(item.displayName) until=\(until)"
+                )
+            }
+
+            if self.shouldDeferPostInteractionRefresh(for: interactionResult) {
+                Logger.info("Skip immediate post-interaction refresh for item=\(item.displayName)")
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                    self?.refreshNow(reason: "post-interaction")
+                }
             }
         }
 
@@ -214,12 +229,17 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     }
 
     private func refreshNow(reason: String) {
+        if shouldSkipAutomaticRefresh(reason: reason) {
+            return
+        }
+
         syncPermissions(promptIfNeeded: false)
 
         guard appState.permissions.isReady else {
             Logger.info("Skip refresh, permissions are not ready")
             appState.items = []
             appState.scanDiagnostics = ["权限未就绪，跳过扫描。"]
+            appState.hiddenDiscoveryDiagnostics = ["权限未就绪，跳过隐藏图标探测。"]
             appState.lastError = "请先授权辅助功能和录屏权限。"
             mirrorPanelController.update(items: [])
             DiagnosticsFileLogger.recordScanSnapshot(
@@ -231,11 +251,18 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
                 diagnostics: appState.scanDiagnostics,
                 lastError: appState.lastError
             )
+            DiagnosticsFileLogger.recordHiddenDiscoverySnapshot(
+                reason: reason,
+                permissions: appState.permissions,
+                diagnostics: appState.hiddenDiscoveryDiagnostics,
+                lastError: appState.lastError
+            )
             return
         }
 
         guard let screen = LayoutCoordinator.primaryScreen() else {
             appState.lastError = "未找到主屏幕。"
+            appState.hiddenDiscoveryDiagnostics = ["未找到主屏幕，跳过隐藏图标探测。"]
             DiagnosticsFileLogger.recordScanSnapshot(
                 reason: reason,
                 permissions: appState.permissions,
@@ -243,6 +270,12 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
                 menuBarFrame: appState.menuBarFrame,
                 kBarFrame: statusItemController.screenFrame(),
                 diagnostics: ["未找到主屏幕。"],
+                lastError: appState.lastError
+            )
+            DiagnosticsFileLogger.recordHiddenDiscoverySnapshot(
+                reason: reason,
+                permissions: appState.permissions,
+                diagnostics: appState.hiddenDiscoveryDiagnostics,
                 lastError: appState.lastError
             )
             return
@@ -253,6 +286,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
 
         appState.items = result.items
         appState.scanDiagnostics = result.diagnostics
+        appState.hiddenDiscoveryDiagnostics = result.hiddenDiagnostics
         appState.lastRefreshDate = Date()
         appState.lastError = nil
         appState.menuBarFrame = result.menuBarFrame
@@ -268,5 +302,39 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             diagnostics: result.diagnostics,
             lastError: appState.lastError
         )
+        DiagnosticsFileLogger.recordHiddenDiscoverySnapshot(
+            reason: reason,
+            permissions: appState.permissions,
+            diagnostics: result.hiddenDiagnostics,
+            lastError: appState.lastError
+        )
+    }
+
+    private func shouldDeferPostInteractionRefresh(for result: InteractionExecutionResult) -> Bool {
+        result.shouldSuppressAutomaticRefresh
+    }
+
+    private func shouldSkipAutomaticRefresh(reason: String) -> Bool {
+        guard let automaticRefreshSuppressedUntil else {
+            return false
+        }
+
+        if Date() >= automaticRefreshSuppressedUntil {
+            self.automaticRefreshSuppressedUntil = nil
+            return false
+        }
+
+        guard automaticRefreshReasons.contains(reason) else {
+            return false
+        }
+
+        Logger.info(
+            "Skip refresh reason=\(reason) suppressedUntil=\(automaticRefreshSuppressedUntil)"
+        )
+        return true
+    }
+
+    private var automaticRefreshReasons: Set<String> {
+        ["post-interaction", "timer", "screen-change", "workspace-change"]
     }
 }

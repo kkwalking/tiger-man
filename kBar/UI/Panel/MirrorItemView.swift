@@ -25,11 +25,17 @@ struct MirrorItemView: View {
             )
         }
         .frame(width: cellWidth, height: 44)
+        .overlay {
+            if !item.isVisibleInMenuBar {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.orange.opacity(0.7), lineWidth: 1)
+            }
+        }
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .onHover { hovered in
             isHovered = hovered
         }
-        .help(item.displayName)
+        .help(item.isVisibleInMenuBar ? item.displayName : "\(item.displayName)（隐藏）")
     }
 
     private var iconDisplaySize: CGSize {

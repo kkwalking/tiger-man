@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 
 struct StatusItemModel: Identifiable {
     let id: UUID
@@ -11,6 +12,7 @@ struct StatusItemModel: Identifiable {
     let snapshot: NSImage
     let isVisibleInMenuBar: Bool
     let role: String?
+    let directAXElement: AXUIElement?
 
     var displayName: String {
         ownerName ?? title ?? ownerBundleID ?? "Unknown Item"
