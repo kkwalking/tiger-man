@@ -49,10 +49,11 @@
    - `kbar-scan-latest.log`
    - `kbar-interaction-latest.log`
    - `kbar-hidden-discovery-latest.log`
-7. `KBAR_ENABLE_DIAGNOSTICS=1` 可开启上述日志落盘；`KBAR_EXPORT_SCAN_IMAGES=1` 可在此基础上额外导出菜单栏原始截图与候选标注图到系统临时目录。
-8. 用法：开发时可在 Xcode Scheme 的 `Run > Environment Variables` 中添加变量；命令行启动时可使用 `KBAR_ENABLE_DIAGNOSTICS=1 /path/to/kBar`，需要导图时再追加 `KBAR_EXPORT_SCAN_IMAGES=1`。
-9. 已补充隐藏图标探测专用诊断日志，避免排查继续依赖人工反馈。
-10. 已补充隐藏图标交互专用日志，能够看到 AX failure code、synthetic tap 类型和刷新抑制状态。
+7. 诊断开关已改为代码常量，位置在 `kBar/Core/Utils/DiagnosticsFileLogger.swift` 的 `DiagnosticsConfiguration`。
+8. 将 `DiagnosticsConfiguration.isEnabled` 改为 `true` 并重新构建，可开启上述日志落盘；将 `DiagnosticsConfiguration.isScanImageExportEnabled` 改为 `true`，且保持 `isEnabled = true` 时，可在此基础上额外导出菜单栏原始截图与候选标注图到系统临时目录。
+9. 用法：需要排查时，直接修改这两个代码常量并重新构建；排查结束后恢复为默认的 `false`。
+10. 已补充隐藏图标探测专用诊断日志，避免排查继续依赖人工反馈。
+11. 已补充隐藏图标交互专用日志，能够看到 AX failure code、synthetic tap 类型和刷新抑制状态。
 
 ### 2.4 图标快照与视觉
 
@@ -79,7 +80,7 @@
 3. 左键/右键交互转发主链路可运行。
 4. VS Code 这类前台 App 场景下，误把顶部状态控件当成候选的问题已被压住。
 5. 纯截图项的点击定位已稳定，不再二次偏移到相邻图标。
-6. 需要排查扫描或交互问题时，可通过环境变量显式开启落盘日志与扫描图片导出。
+6. 需要排查扫描或交互问题时，可通过代码常量显式开启落盘日志与扫描图片导出。
 7. 被 macOS 隐藏的图标已经能进入面板并展示 logo。
 8. 当前下一步不是继续做 UI 微调，而是扩大隐藏图标兼容性并继续压缩交互回退的不确定性。
 
@@ -107,7 +108,7 @@
    - [`kBar/Services/InteractionProxy.swift`](kBar/Services/InteractionProxy.swift)
    - [`kBar/Services/ScreenCaptureService.swift`](kBar/Services/ScreenCaptureService.swift)
    - [`kBar/App/AppCoordinator.swift`](kBar/App/AppCoordinator.swift)
-3. 如果要排查问题，先用环境变量开启诊断，再优先读取：
+3. 如果要排查问题，先把 `kBar/Core/Utils/DiagnosticsFileLogger.swift` 中的 `DiagnosticsConfiguration` 调到目标值并重新构建，再优先读取：
    - `kbar-events.log`
    - `kbar-scan-latest.log`
    - `kbar-interaction-latest.log`

@@ -87,7 +87,7 @@
 - [`kBar/Core/Utils/Logger.swift`](kBar/Core/Utils/Logger.swift)
 
 职责：权限状态、手动刷新、文件日志持久化与诊断开关解析。  
-当前状态：设置页已精简为权限状态与手动刷新；文件诊断落盘默认关闭，需要时通过环境变量开启。
+当前状态：设置页已精简为权限状态与手动刷新；文件诊断落盘默认关闭，需要时通过代码常量开启。
 
 ## 5. 核心流程（当前实现）
 
@@ -157,7 +157,7 @@
 1. 左键 / 右键均可转发。
 2. 事件投递坐标已按 macOS 事件坐标系做转换。
 3. 纯 screenshot 项不再在交互瞬间重新解析相邻 AX 目标。
-4. 交互链路有完整文件诊断能力；开启 `KBAR_ENABLE_DIAGNOSTICS=1` 后会写入 `kbar-interaction-latest.log`。
+4. 交互链路有完整文件诊断能力；将 `DiagnosticsConfiguration.isEnabled` 改为 `true` 并重新构建后，会写入 `kbar-interaction-latest.log`。
 5. 隐藏项已支持：
    - `directAXElement`
    - AX failure code 记录
@@ -173,13 +173,13 @@
 ## 8. 诊断与排障策略
 
 1. 设置页不再展示诊断区域；诊断能力以可选文件落盘为主。
-2. `KBAR_ENABLE_DIAGNOSTICS=1` 时，项目根目录会写入：
+2. 将 `kBar/Core/Utils/DiagnosticsFileLogger.swift` 中的 `DiagnosticsConfiguration.isEnabled` 改为 `true` 并重新构建后，项目根目录会写入：
    - `kbar-events.log`
    - `kbar-scan-latest.log`
    - `kbar-interaction-latest.log`
    - `kbar-hidden-discovery-latest.log`
-3. `KBAR_EXPORT_SCAN_IMAGES=1` 需要与 `KBAR_ENABLE_DIAGNOSTICS=1` 配合使用；开启后会额外把菜单栏原始截图与候选标注图导出到系统临时目录，便于排查识别、过滤和裁图问题。
-4. 用法：开发时可在 Xcode Scheme 的 `Run > Environment Variables` 中添加变量；命令行启动时可使用 `KBAR_ENABLE_DIAGNOSTICS=1 /path/to/kBar`，需要导图时再追加 `KBAR_EXPORT_SCAN_IMAGES=1`。
+3. 将同一处的 `DiagnosticsConfiguration.isScanImageExportEnabled` 改为 `true`，且保持 `isEnabled = true` 时，会额外把菜单栏原始截图与候选标注图导出到系统临时目录，便于排查识别、过滤和裁图问题。
+4. 用法：需要排查时，直接修改上述代码常量并重新构建；排查结束后恢复为默认的 `false`，避免长期写盘。
 5. 诊断已包含候选分层统计，例如：
    - `scanRegionCandidates`
    - `menuScopedCandidates`
@@ -214,7 +214,7 @@
 10. 已修复隐藏项菜单“弹出约 1 秒后自动关闭”的问题。
 11. 当前对隐藏项的交互结果、AX 失败码、自动刷新抑制状态都已有可观测日志。
 12. 已修复 `kBar` 自身入口的二次点击行为，当前虚拟菜单栏支持“点一次打开、再点一次收起”的稳定切换。
-13. 已优化面板打开热路径，点击 `kBar` 时不再先被同步全量扫描阻塞；诊断文件写盘默认关闭，并新增环境变量控制扫描图片导出。
+13. 已优化面板打开热路径，点击 `kBar` 时不再先被同步全量扫描阻塞；诊断文件写盘默认关闭，并新增代码常量控制扫描图片导出。
 
 ### 9.2 当前未完成
 

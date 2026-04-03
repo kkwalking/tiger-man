@@ -36,7 +36,7 @@
 4. 被 macOS 隐藏的第三方图标发现链路已经打通，当前已在真实样本上验证 `Bob`、`OrbStack` 可被识别并出现在面板中。
 5. 隐藏图标已支持独立 logo 展示；优先使用宿主 App 图标，必要时再回退到菜单栏裁图或占位图。
 6. 左键 / 右键交互转发主链路已经打通；对已验证的隐藏样本，点击后可弹出原始菜单，且不再出现“菜单短暂弹出后自动关闭”的问题。
-7. 项目根目录保留可选诊断落盘能力，但默认关闭；需要排查时可通过环境变量显式开启。
+7. 项目根目录保留可选诊断落盘能力，但默认关闭；需要排查时可通过代码常量显式开启。
 8. 当前阶段的大问题已经从“能否发现隐藏图标”转为“如何扩大隐藏图标兼容性，并减少对交互回退链路的依赖”。
 
 ## 已知限制 / 待后续研究
@@ -52,11 +52,12 @@
 1. 辅助功能权限：用于 AX 元素发现与交互转发。
 2. 录屏权限：用于菜单栏截图扫描与图标快照。
 
-## 诊断开关与环境变量
+## 诊断开关与代码常量
 
-1. `KBAR_ENABLE_DIAGNOSTICS=1`：开启项目根目录诊断日志落盘；默认关闭。开启后会写入 `kbar-events.log`、`kbar-scan-latest.log`、`kbar-interaction-latest.log`、`kbar-hidden-discovery-latest.log`。
-2. `KBAR_EXPORT_SCAN_IMAGES=1`：在 `KBAR_ENABLE_DIAGNOSTICS=1` 已开启的前提下，额外导出菜单栏原始截图与候选标注图；默认关闭，用于排查扫描候选、过滤结果和裁图问题。导出文件位于系统临时目录，前缀分别为 `kbar-menubar-capture-*.png`、`kbar-menubar-annotated-*.png`。
-3. 用法：开发时可在 Xcode Scheme 的 `Run > Environment Variables` 中添加上述变量；若从命令行启动，可使用 `KBAR_ENABLE_DIAGNOSTICS=1 /path/to/kBar`，需要图片导出时再追加 `KBAR_EXPORT_SCAN_IMAGES=1`。
+1. 诊断总开关位于 `kBar/Core/Utils/DiagnosticsFileLogger.swift` 的 `DiagnosticsConfiguration.isEnabled`，默认是 `false`。改为 `true` 后重新构建，项目根目录会开始写入 `kbar-events.log`、`kbar-scan-latest.log`、`kbar-interaction-latest.log`、`kbar-hidden-discovery-latest.log`。
+2. 扫描图片导出开关位于同一处的 `DiagnosticsConfiguration.isScanImageExportEnabled`，默认是 `false`。只有在 `isEnabled = true` 时它才生效，用于额外导出菜单栏原始截图与候选标注图，便于排查扫描候选、过滤结果和裁图问题。
+3. 扫描图片导出文件位于系统临时目录，前缀分别为 `kbar-menubar-capture-*.png`、`kbar-menubar-annotated-*.png`。
+4. 用法：需要排查时，直接把这两个代码常量改成目标值并重新构建；排查结束后再恢复为默认的 `false`。
 
 ## UI 参考
 

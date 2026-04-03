@@ -1,6 +1,15 @@
 import AppKit
 import Foundation
 
+private enum DiagnosticsConfiguration {
+    // Temporarily set to true when you need local diagnostics, then rebuild.
+    static let isEnabled = false
+
+    // Only takes effect when `isEnabled` is true.
+    // Exports raw and annotated menu bar PNGs into the system temporary directory.
+    static let isScanImageExportEnabled = false
+}
+
 enum DiagnosticsFileLogger {
     private static let baseURL = URL(fileURLWithPath: "/Users/zhouzekun/code/kbar", isDirectory: true)
     private static let eventsURL = baseURL.appendingPathComponent("kbar-events.log")
@@ -8,19 +17,17 @@ enum DiagnosticsFileLogger {
     private static let latestInteractionURL = baseURL.appendingPathComponent("kbar-interaction-latest.log")
     private static let latestHiddenDiscoveryURL = baseURL.appendingPathComponent("kbar-hidden-discovery-latest.log")
     private static let queue = DispatchQueue(label: "com.zhouzekun.kbar.diagnostics-file")
-    private static let diagnosticsEnabled = ProcessInfo.processInfo.environment["KBAR_ENABLE_DIAGNOSTICS"] == "1"
-    private static let scanImageExportRequested = ProcessInfo.processInfo.environment["KBAR_EXPORT_SCAN_IMAGES"] == "1"
 
     static var isEnabled: Bool {
-        diagnosticsEnabled
+        DiagnosticsConfiguration.isEnabled
     }
 
     static var isScanImageExportEnabled: Bool {
-        diagnosticsEnabled && scanImageExportRequested
+        DiagnosticsConfiguration.isEnabled && DiagnosticsConfiguration.isScanImageExportEnabled
     }
 
     static func appendRuntimeLog(level: String, message: String) {
-        guard diagnosticsEnabled else {
+        guard isEnabled else {
             return
         }
         appendEventBlock(
@@ -41,7 +48,7 @@ enum DiagnosticsFileLogger {
         diagnostics: [String],
         lastError: String?
     ) {
-        guard diagnosticsEnabled else {
+        guard isEnabled else {
             return
         }
         var lines: [String] = [
@@ -75,7 +82,7 @@ enum DiagnosticsFileLogger {
         diagnostics: [String],
         lastError: String?
     ) {
-        guard diagnosticsEnabled else {
+        guard isEnabled else {
             return
         }
         var lines: [String] = [
@@ -112,7 +119,7 @@ enum DiagnosticsFileLogger {
         diagnostics: [String],
         lastError: String?
     ) {
-        guard diagnosticsEnabled else {
+        guard isEnabled else {
             return
         }
         var lines: [String] = [
