@@ -16,9 +16,6 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         activateHandler: { [weak self] item, interaction in
             self?.handleInteraction(for: item, interaction: interaction)
         },
-        refreshHandler: { [weak self] in
-            self?.refreshNow(reason: "manual")
-        },
         settingsHandler: { [weak self] in
             self?.showSettings()
         }

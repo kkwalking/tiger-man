@@ -3,11 +3,10 @@ import SwiftUI
 struct MirrorPanelView: View {
     @ObservedObject var appState: AppState
     let activateHandler: (StatusItemModel, StatusItemInteraction) -> Void
-    let refreshHandler: () -> Void
     let settingsHandler: () -> Void
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             if appState.items.isEmpty {
                 emptyState
             } else {
@@ -20,25 +19,22 @@ struct MirrorPanelView: View {
 
             Divider()
                 .overlay(.white.opacity(0.08))
-                .frame(height: 40)
+                .frame(height: 22)
 
-            VStack(spacing: 10) {
-                ActionBadge(symbol: "arrow.clockwise", action: refreshHandler)
-                ActionBadge(symbol: "gearshape", action: settingsHandler)
-            }
+            ActionBadge(symbol: "gearshape", action: settingsHandler)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 3)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
                 .fill(Color.black.opacity(0.92))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    RoundedRectangle(cornerRadius: 15, style: .continuous)
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
-                .shadow(color: .black.opacity(0.28), radius: 20, y: 8)
+                .shadow(color: .black.opacity(0.14), radius: 5, y: 1)
         )
-        .padding(6)
+        .padding(1)
     }
 
     private var emptyState: some View {
@@ -46,7 +42,7 @@ struct MirrorPanelView: View {
             Text("未发现可收起图标")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
-            Text("确认已授予权限，或点击刷新重新扫描。")
+            Text("确认已授予权限，或到设置页重新扫描。")
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.72))
         }
@@ -64,11 +60,11 @@ private struct ActionBadge: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(width: 34, height: 34)
+                .frame(width: 25, height: 25)
                 .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .fill(hovered ? Color.white.opacity(0.12) : Color.white.opacity(0.06))
                 )
         }

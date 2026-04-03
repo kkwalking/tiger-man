@@ -32,7 +32,7 @@ enum LayoutCoordinator {
             max(anchorFrame.midX - (panelSize.width / 2), screenFrame.minX + 12),
             screenFrame.maxX - panelSize.width - 12
         )
-        let originY = max(screenFrame.minY + 12, anchorFrame.minY - panelSize.height - 10)
+        let originY = max(screenFrame.minY + 12, anchorFrame.minY - panelSize.height - 1)
         return CGRect(origin: CGPoint(x: originX, y: originY), size: panelSize)
     }
 }

@@ -5,14 +5,13 @@ import SwiftUI
 final class MirrorPanelController: NSObject, NSWindowDelegate {
     private let appState: AppState
     private let activateHandler: (StatusItemModel, StatusItemInteraction) -> Void
-    private let refreshHandler: () -> Void
     private let settingsHandler: () -> Void
     private var globalEventMonitor: Any?
     private var localEventMonitor: Any?
 
     private lazy var panel: NSPanel = {
         let panel = NSPanel(
-            contentRect: CGRect(origin: .zero, size: CGSize(width: 320, height: 84)),
+            contentRect: CGRect(origin: .zero, size: CGSize(width: 320, height: 44)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -37,19 +36,15 @@ final class MirrorPanelController: NSObject, NSWindowDelegate {
     init(
         appState: AppState,
         activateHandler: @escaping (StatusItemModel, StatusItemInteraction) -> Void,
-        refreshHandler: @escaping () -> Void,
         settingsHandler: @escaping () -> Void
     ) {
         self.appState = appState
         self.activateHandler = activateHandler
-        self.refreshHandler = refreshHandler
         self.settingsHandler = settingsHandler
     }
 
     func update(items: [StatusItemModel]) {
-        let panelSize = preferredPanelSize(for: items.count)
-        panel.setContentSize(panelSize)
-        panel.contentView = NSHostingView(rootView: rootView())
+        _ = applyPreferredContentSize()
     }
 
     func show(relativeTo anchorFrame: CGRect) {
@@ -59,7 +54,7 @@ final class MirrorPanelController: NSObject, NSWindowDelegate {
         }
 
         let panelFrame = LayoutCoordinator.panelFrame(
-            panelSize: preferredPanelSize(for: appState.items.count),
+            panelSize: applyPreferredContentSize(),
             anchorFrame: anchorFrame,
             screen: screen
         )
@@ -78,16 +73,25 @@ final class MirrorPanelController: NSObject, NSWindowDelegate {
         // is not active. Explicit outside-click monitoring is more reliable.
     }
 
-    private func preferredPanelSize(for itemCount: Int) -> CGSize {
-        let width = min(640, max(220, CGFloat(itemCount) * 56 + 88))
-        return CGSize(width: width, height: 84)
+    private func applyPreferredContentSize() -> CGSize {
+        let hostingView = NSHostingView(rootView: rootView())
+        hostingView.layoutSubtreeIfNeeded()
+
+        let fittingSize = hostingView.fittingSize
+        let panelSize = CGSize(
+            width: min(640, max(180, ceil(fittingSize.width))),
+            height: max(1, ceil(fittingSize.height))
+        )
+
+        panel.setContentSize(panelSize)
+        panel.contentView = hostingView
+        return panelSize
     }
 
-    private func rootView() -> some View {
+    private func rootView() -> MirrorPanelView {
         MirrorPanelView(
             appState: appState,
             activateHandler: activateHandler,
-            refreshHandler: refreshHandler,
             settingsHandler: settingsHandler
         )
     }

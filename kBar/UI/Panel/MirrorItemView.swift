@@ -10,7 +10,7 @@ struct MirrorItemView: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 9)
                 .fill(isHovered ? Color.white.opacity(0.14) : Color.clear)
 
             Image(nsImage: item.snapshot)
@@ -24,14 +24,8 @@ struct MirrorItemView: View {
                 rightAction: { activateHandler(.rightClick) }
             )
         }
-        .frame(width: cellWidth, height: 44)
-        .overlay {
-            if !item.isVisibleInMenuBar {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.orange.opacity(0.7), lineWidth: 1)
-            }
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .frame(width: cellWidth, height: 33)
+        .contentShape(RoundedRectangle(cornerRadius: 9))
         .onHover { hovered in
             isHovered = hovered
         }
@@ -44,8 +38,8 @@ struct MirrorItemView: View {
             return CGSize(width: 22, height: 18)
         }
 
-        let maxWidth: CGFloat = 40
-        let maxHeight: CGFloat = 22
+        let maxWidth: CGFloat = 36
+        let maxHeight: CGFloat = 17
         let scale = min(maxWidth / originalSize.width, maxHeight / originalSize.height, 1)
         return CGSize(
             width: max(14, originalSize.width * scale),
@@ -54,7 +48,7 @@ struct MirrorItemView: View {
     }
 
     private var cellWidth: CGFloat {
-        max(40, iconDisplaySize.width + 14)
+        max(36, iconDisplaySize.width + 10)
     }
 }
 
