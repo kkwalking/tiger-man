@@ -4,6 +4,11 @@ import Foundation
 
 @MainActor
 final class AppCoordinator: NSObject, NSApplicationDelegate {
+    private enum MirrorPanelTrigger {
+        case statusItem
+        case hotKey
+    }
+
     private let appState = AppState()
     private let permissionCenter = PermissionCenter()
     private let screenCaptureService = ScreenCaptureService()
@@ -11,6 +16,9 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     private lazy var statusBarRegistry = StatusBarRegistry(discoveryService: discoveryService)
     private let interactionProxy = InteractionProxy()
     private lazy var statusItemController = KBarStatusItemController()
+    private lazy var globalHotKeyService = GlobalHotKeyService { [weak self] in
+        self?.toggleMirrorPanel(trigger: .hotKey)
+    }
     private lazy var mirrorPanelController = MirrorPanelController(
         appState: appState,
         activateHandler: { [weak self] item, interaction in
@@ -34,15 +42,18 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     private var refreshTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
     private var automaticRefreshSuppressedUntil: Date?
+    private var pendingFrontmostRefreshWorkItem: DispatchWorkItem?
     private let automaticRefreshSuppressionDuration: TimeInterval = 5.0
     private let panelOpenRefreshDelay: TimeInterval = 0.05
     private let panelOpenRefreshStalenessThreshold: TimeInterval = 1.5
+    private let frontmostRefreshDebounce: TimeInterval = 0.12
+    private let launchSettlingRefreshDelay: TimeInterval = 0.35
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Logger.info("Application launched")
 
         statusItemController.primaryActionHandler = { [weak self] in
-            self?.toggleMirrorPanel()
+            self?.toggleMirrorPanel(trigger: .statusItem)
         }
         statusItemController.secondaryActionHandler = { [weak self] in
             self?.showSettings()
@@ -50,12 +61,17 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
 
         bindState()
         observeSystemChanges()
+        registerGlobalHotKey()
+        appState.observedFrontmostBundleID = monitoredFrontmostApplicationBundleID()
         syncPermissions(promptIfNeeded: true)
         refreshNow(reason: "launch")
+        scheduleLaunchSettlingRefresh()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
+        pendingFrontmostRefreshWorkItem?.cancel()
+        globalHotKeyService.unregister()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -93,6 +109,13 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             object: nil
         )
 
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleFrontmostApplicationChange(_:)),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+
         configureRefreshTimer()
     }
 
@@ -110,6 +133,21 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         refreshTimer?.tolerance = 1.0
     }
 
+    private func registerGlobalHotKey() {
+        let succeeded = globalHotKeyService.register()
+        guard !succeeded else {
+            return
+        }
+
+        Logger.error("Global hot key registration failed shortcut=\(GlobalHotKeyService.shortcutDisplayName)")
+    }
+
+    private func scheduleLaunchSettlingRefresh() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + launchSettlingRefreshDelay) { [weak self] in
+            self?.refreshNow(reason: "launch-settling")
+        }
+    }
+
     @objc
     private func handleScreenParametersChange() {
         refreshNow(reason: "screen-change")
@@ -120,7 +158,16 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         refreshNow(reason: "workspace-change")
     }
 
-    private func toggleMirrorPanel() {
+    @objc
+    private func handleFrontmostApplicationChange(_ notification: Notification) {
+        guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+            return
+        }
+
+        noteFrontmostApplicationDidChange(to: application.bundleIdentifier)
+    }
+
+    private func toggleMirrorPanel(trigger: MirrorPanelTrigger) {
         syncPermissions(promptIfNeeded: false)
         if mirrorPanelController.isVisible {
             mirrorPanelController.close()
@@ -128,14 +175,16 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             return
         }
 
-        guard let anchorFrame = mirrorPanelAnchorFrame() else {
+        guard let anchorFrame = mirrorPanelAnchorFrame(for: trigger) else {
             appState.lastError = "无法获取 kBar 菜单栏位置。"
             return
         }
 
+        let shouldHideCachedContents = shouldHideCachedMirrorPanelContentsOnOpen
+        appState.isPanelRefreshing = shouldHideCachedContents
         mirrorPanelController.show(relativeTo: anchorFrame)
         appState.isPanelVisible = true
-        refreshAfterPresentingMirrorPanelIfNeeded()
+        refreshAfterPresentingMirrorPanelIfNeeded(force: shouldHideCachedContents)
     }
 
     private func showSettings(activateApp: Bool = true) {
@@ -229,6 +278,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             appState.scanDiagnostics = ["权限未就绪，跳过扫描。"]
             appState.hiddenDiscoveryDiagnostics = ["权限未就绪，跳过隐藏图标探测。"]
             appState.lastError = "请先授权辅助功能和录屏权限。"
+            appState.isPanelRefreshing = false
             mirrorPanelController.update(items: [])
             DiagnosticsFileLogger.recordScanSnapshot(
                 reason: reason,
@@ -251,6 +301,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         guard let screen = LayoutCoordinator.primaryScreen() else {
             appState.lastError = "未找到主屏幕。"
             appState.hiddenDiscoveryDiagnostics = ["未找到主屏幕，跳过隐藏图标探测。"]
+            appState.isPanelRefreshing = false
             DiagnosticsFileLogger.recordScanSnapshot(
                 reason: reason,
                 permissions: appState.permissions,
@@ -277,8 +328,12 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         appState.hiddenDiscoveryDiagnostics = result.hiddenDiagnostics
         appState.lastRefreshDate = Date()
         appState.lastError = nil
+        appState.isPanelRefreshing = false
         appState.menuBarFrame = result.menuBarFrame
         appState.lastRefreshReason = reason
+        appState.lastRefreshFrontmostBundleID = monitoredFrontmostApplicationBundleID()
+        appState.observedFrontmostBundleID = appState.lastRefreshFrontmostBundleID
+        appState.frontmostAppCacheDirty = false
 
         mirrorPanelController.update(items: result.items)
         DiagnosticsFileLogger.recordScanSnapshot(
@@ -322,11 +377,52 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         return true
     }
 
-    private func mirrorPanelAnchorFrame() -> CGRect? {
-        if let statusItemFrame = statusItemController.screenFrame() {
+    private func noteFrontmostApplicationDidChange(to bundleID: String?) {
+        let appBundleID = Bundle.main.bundleIdentifier
+        guard bundleID != appBundleID else {
+            return
+        }
+
+        guard appState.observedFrontmostBundleID != bundleID else {
+            return
+        }
+
+        appState.observedFrontmostBundleID = bundleID
+        let needsRefresh = appState.lastRefreshFrontmostBundleID != bundleID
+        appState.frontmostAppCacheDirty = needsRefresh
+
+        guard needsRefresh else {
+            return
+        }
+
+        if appState.isPanelVisible {
+            appState.isPanelRefreshing = true
+        }
+
+        scheduleFrontmostApplicationRefresh()
+    }
+
+    private func scheduleFrontmostApplicationRefresh() {
+        pendingFrontmostRefreshWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.refreshNow(reason: "frontmost-app-change")
+        }
+        pendingFrontmostRefreshWorkItem = workItem
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + frontmostRefreshDebounce, execute: workItem)
+    }
+
+    private func mirrorPanelAnchorFrame(for trigger: MirrorPanelTrigger) -> CGRect? {
+        if trigger == .statusItem,
+           let statusItemFrame = statusItemController.screenFrame() {
             return statusItemFrame
         }
 
+        return fallbackMirrorPanelAnchorFrame()
+    }
+
+    private func fallbackMirrorPanelAnchorFrame() -> CGRect? {
         guard let screen = LayoutCoordinator.primaryScreen() else {
             return nil
         }
@@ -342,8 +438,8 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func refreshAfterPresentingMirrorPanelIfNeeded() {
-        guard shouldRefreshMirrorPanelContentsOnOpen else {
+    private func refreshAfterPresentingMirrorPanelIfNeeded(force: Bool = false) {
+        guard force || shouldRefreshMirrorPanelContentsOnOpen else {
             return
         }
 
@@ -356,6 +452,14 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     }
 
     private var shouldRefreshMirrorPanelContentsOnOpen: Bool {
+        if appState.frontmostAppCacheDirty {
+            return true
+        }
+
+        if launchBootstrapRefreshReasons.contains(appState.lastRefreshReason) {
+            return true
+        }
+
         guard let lastRefreshDate = appState.lastRefreshDate else {
             return true
         }
@@ -365,5 +469,21 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
 
     private var automaticRefreshReasons: Set<String> {
         ["post-interaction", "timer", "screen-change", "workspace-change"]
+    }
+
+    private var launchBootstrapRefreshReasons: Set<String> {
+        ["launch", "launch-settling"]
+    }
+
+    private var shouldHideCachedMirrorPanelContentsOnOpen: Bool {
+        appState.frontmostAppCacheDirty || launchBootstrapRefreshReasons.contains(appState.lastRefreshReason)
+    }
+
+    private func monitoredFrontmostApplicationBundleID() -> String? {
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        if bundleID == Bundle.main.bundleIdentifier {
+            return appState.observedFrontmostBundleID
+        }
+        return bundleID
     }
 }

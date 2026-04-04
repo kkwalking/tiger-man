@@ -23,6 +23,14 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
+                    LabeledContent("全局快捷键", value: GlobalHotKeyService.shortcutDisplayName)
+                    Spacer()
+                }
+                Text("当菜单栏中的 kBar 被系统隐藏时，仍可用该快捷键打开或收起虚拟菜单栏。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
+                HStack {
                     LabeledContent("已识别图标数量", value: "\(appState.items.count)")
                     Spacer()
                     Button("立即刷新", action: refreshHandler)

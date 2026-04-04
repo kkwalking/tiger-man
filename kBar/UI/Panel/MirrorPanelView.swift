@@ -7,7 +7,9 @@ struct MirrorPanelView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if appState.items.isEmpty {
+            if appState.isPanelRefreshing {
+                loadingState
+            } else if appState.items.isEmpty {
                 emptyState
             } else {
                 ForEach(appState.items) { item in
@@ -35,6 +37,18 @@ struct MirrorPanelView: View {
                 .shadow(color: .black.opacity(0.14), radius: 5, y: 1)
         )
         .padding(1)
+    }
+
+    private var loadingState: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(.white)
+            Text("正在刷新...")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+        }
+        .frame(width: 220, alignment: .leading)
     }
 
     private var emptyState: some View {
