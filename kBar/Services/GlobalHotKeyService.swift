@@ -1,14 +1,15 @@
 import AppKit
-import Carbon
 
 final class GlobalHotKeyService {
-    static let shortcutDisplayName = "⌃⌥⌘K"
+    var isEnabled = true
 
+    private var shortcut: GlobalHotKeyShortcut
     private let handler: () -> Void
     private var globalMonitor: Any?
     private var localMonitor: Any?
 
-    init(handler: @escaping () -> Void) {
+    init(shortcut: GlobalHotKeyShortcut, handler: @escaping () -> Void) {
+        self.shortcut = shortcut
         self.handler = handler
     }
 
@@ -46,12 +47,19 @@ final class GlobalHotKeyService {
 
         guard localMonitor != nil, globalMonitor != nil else {
             unregister()
-            Logger.error("Failed to register global hot key shortcut=\(Self.shortcutDisplayName)")
+            Logger.error("Failed to register global hot key shortcut=\(shortcut.displayName)")
             return false
         }
 
-        Logger.info("Registered global hot key shortcut=\(Self.shortcutDisplayName)")
+        Logger.info("Registered global hot key shortcut=\(shortcut.displayName)")
         return true
+    }
+
+    @discardableResult
+    func updateShortcut(_ shortcut: GlobalHotKeyShortcut) -> Bool {
+        self.shortcut = shortcut
+        Logger.info("Updated global hot key shortcut=\(shortcut.displayName)")
+        return register()
     }
 
     func unregister() {
@@ -67,12 +75,10 @@ final class GlobalHotKeyService {
     }
 
     private func matchesShortcut(_ event: NSEvent) -> Bool {
-        guard !event.isARepeat, event.keyCode == UInt16(kVK_ANSI_K) else {
+        guard isEnabled else {
             return false
         }
 
-        let requiredFlags: NSEvent.ModifierFlags = [.control, .option, .command]
-        let effectiveFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        return effectiveFlags == requiredFlags
+        return shortcut.matches(event)
     }
 }

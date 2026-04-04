@@ -8,6 +8,8 @@ final class AppState: ObservableObject {
     @Published var scanDiagnostics: [String] = []
     @Published var interactionDiagnostics: [String] = []
     @Published var hiddenDiscoveryDiagnostics: [String] = []
+    @Published var globalHotKeyShortcut: GlobalHotKeyShortcut
+    @Published var isRecordingGlobalHotKey = false
     @Published var isPanelRefreshing = false
     @Published var permissions = PermissionStatus()
     @Published var autoRefreshEnabled = true
@@ -20,6 +22,10 @@ final class AppState: ObservableObject {
     @Published var frontmostAppCacheDirty = false
     @Published var lastError: String?
     @Published var menuBarFrame = CGRect.zero
+
+    init() {
+        globalHotKeyShortcut = GlobalHotKeyShortcutStore.load()
+    }
 }
 
 struct PermissionStatus {

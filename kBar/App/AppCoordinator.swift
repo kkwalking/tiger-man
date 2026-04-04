@@ -16,7 +16,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     private lazy var statusBarRegistry = StatusBarRegistry(discoveryService: discoveryService)
     private let interactionProxy = InteractionProxy()
     private lazy var statusItemController = KBarStatusItemController()
-    private lazy var globalHotKeyService = GlobalHotKeyService { [weak self] in
+    private lazy var globalHotKeyService = GlobalHotKeyService(shortcut: appState.globalHotKeyShortcut) { [weak self] in
         self?.toggleMirrorPanel(trigger: .hotKey)
     }
     private lazy var mirrorPanelController = MirrorPanelController(
@@ -48,6 +48,8 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     private let panelOpenRefreshStalenessThreshold: TimeInterval = 1.5
     private let frontmostRefreshDebounce: TimeInterval = 0.12
     private let launchSettlingRefreshDelay: TimeInterval = 0.35
+    private let mirrorPanelFallbackTrailingInset: CGFloat = 12
+    private var lastKnownStatusItemFrame: CGRect?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Logger.info("Application launched")
@@ -62,6 +64,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         bindState()
         observeSystemChanges()
         registerGlobalHotKey()
+        _ = updateVisibleStatusItemFrame()
         appState.observedFrontmostBundleID = monitoredFrontmostApplicationBundleID()
         syncPermissions(promptIfNeeded: true)
         refreshNow(reason: "launch")
@@ -83,6 +86,20 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         appState.$autoRefreshEnabled
             .sink { [weak self] _ in
                 self?.configureRefreshTimer()
+            }
+            .store(in: &cancellables)
+
+        appState.$globalHotKeyShortcut
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] shortcut in
+                self?.applyGlobalHotKeyShortcut(shortcut)
+            }
+            .store(in: &cancellables)
+
+        appState.$isRecordingGlobalHotKey
+            .sink { [weak self] isRecording in
+                self?.globalHotKeyService.isEnabled = !isRecording
             }
             .store(in: &cancellables)
     }
@@ -134,12 +151,19 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     }
 
     private func registerGlobalHotKey() {
-        let succeeded = globalHotKeyService.register()
+        _ = applyGlobalHotKeyShortcut(appState.globalHotKeyShortcut)
+    }
+
+    @discardableResult
+    private func applyGlobalHotKeyShortcut(_ shortcut: GlobalHotKeyShortcut) -> Bool {
+        GlobalHotKeyShortcutStore.save(shortcut)
+        let succeeded = globalHotKeyService.updateShortcut(shortcut)
         guard !succeeded else {
-            return
+            return true
         }
 
-        Logger.error("Global hot key registration failed shortcut=\(GlobalHotKeyService.shortcutDisplayName)")
+        Logger.error("Global hot key registration failed shortcut=\(shortcut.displayName)")
+        return false
     }
 
     private func scheduleLaunchSettlingRefresh() {
@@ -175,14 +199,14 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             return
         }
 
-        guard let anchorFrame = mirrorPanelAnchorFrame(for: trigger) else {
+        guard let placement = mirrorPanelPlacement(for: trigger) else {
             appState.lastError = "无法获取 kBar 菜单栏位置。"
             return
         }
 
         let shouldHideCachedContents = shouldHideCachedMirrorPanelContentsOnOpen
         appState.isPanelRefreshing = shouldHideCachedContents
-        mirrorPanelController.show(relativeTo: anchorFrame)
+        mirrorPanelController.show(using: placement)
         appState.isPanelVisible = true
         refreshAfterPresentingMirrorPanelIfNeeded(force: shouldHideCachedContents)
     }
@@ -320,7 +344,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             return
         }
 
-        let kBarFrame = statusItemController.screenFrame()
+        let kBarFrame = updateVisibleStatusItemFrame()
         let result = statusBarRegistry.refresh(on: screen, kBarFrame: kBarFrame)
 
         appState.items = result.items
@@ -413,29 +437,50 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + frontmostRefreshDebounce, execute: workItem)
     }
 
-    private func mirrorPanelAnchorFrame(for trigger: MirrorPanelTrigger) -> CGRect? {
-        if trigger == .statusItem,
-           let statusItemFrame = statusItemController.screenFrame() {
-            return statusItemFrame
+    private func mirrorPanelPlacement(for trigger: MirrorPanelTrigger) -> MirrorPanelController.PanelPlacement? {
+        if let statusItemFrame = updateVisibleStatusItemFrame() {
+            if trigger == .hotKey {
+                Logger.info("Mirror panel hot key anchored to visible kBar status item")
+            }
+            return .anchorFrame(statusItemFrame)
         }
 
-        return fallbackMirrorPanelAnchorFrame()
+        return fallbackMirrorPanelPlacement(trigger: trigger)
     }
 
-    private func fallbackMirrorPanelAnchorFrame() -> CGRect? {
-        guard let screen = LayoutCoordinator.primaryScreen() else {
+    private func fallbackMirrorPanelPlacement(trigger: MirrorPanelTrigger) -> MirrorPanelController.PanelPlacement? {
+        guard let screen = fallbackMirrorPanelScreen() else {
             return nil
         }
 
-        let menuBarFrame = LayoutCoordinator.menuBarFrame(for: screen)
-        let clampedX = min(max(NSEvent.mouseLocation.x, screen.frame.minX + 8), screen.frame.maxX - 8)
-        Logger.info("Fallback anchor frame used for mirror panel")
-        return CGRect(
-            x: clampedX - 9,
-            y: menuBarFrame.minY,
-            width: 18,
-            height: menuBarFrame.height
+        Logger.info(
+            "Mirror panel fallback placement used trigger=\(String(describing: trigger)) screen=\(screen.localizedName)"
         )
+        return .trailingMenuBar(screen: screen, trailingInset: mirrorPanelFallbackTrailingInset)
+    }
+
+    @discardableResult
+    private func updateVisibleStatusItemFrame() -> CGRect? {
+        guard let statusItemFrame = statusItemController.screenFrame() else {
+            return nil
+        }
+
+        lastKnownStatusItemFrame = statusItemFrame
+        return statusItemFrame
+    }
+
+    private func fallbackMirrorPanelScreen() -> NSScreen? {
+        if let cachedStatusItemFrame = lastKnownStatusItemFrame,
+           let cachedStatusItemScreen = LayoutCoordinator.screen(containing: cachedStatusItemFrame) {
+            return cachedStatusItemScreen
+        }
+
+        if !appState.menuBarFrame.isEmpty,
+           let lastRefreshScreen = LayoutCoordinator.screen(containing: appState.menuBarFrame) {
+            return lastRefreshScreen
+        }
+
+        return LayoutCoordinator.primaryScreen()
     }
 
     private func refreshAfterPresentingMirrorPanelIfNeeded(force: Bool = false) {

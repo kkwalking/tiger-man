@@ -3,6 +3,11 @@ import SwiftUI
 
 @MainActor
 final class MirrorPanelController: NSObject, NSWindowDelegate {
+    enum PanelPlacement {
+        case anchorFrame(CGRect)
+        case trailingMenuBar(screen: NSScreen, trailingInset: CGFloat)
+    }
+
     private let appState: AppState
     private let activateHandler: (StatusItemModel, StatusItemInteraction) -> Void
     private let settingsHandler: () -> Void
@@ -50,17 +55,29 @@ final class MirrorPanelController: NSObject, NSWindowDelegate {
         _ = applyPreferredContentSize()
     }
 
-    func show(relativeTo anchorFrame: CGRect) {
-        let screen = NSScreen.screens.first(where: { $0.frame.intersects(anchorFrame) }) ?? NSScreen.main
-        guard let screen else {
-            return
+    func show(using placement: PanelPlacement) {
+        let panelSize = applyPreferredContentSize()
+        let panelFrame: CGRect
+
+        switch placement {
+        case let .anchorFrame(anchorFrame):
+            let screen = LayoutCoordinator.screen(containing: anchorFrame) ?? NSScreen.main
+            guard let screen else {
+                return
+            }
+            panelFrame = LayoutCoordinator.panelFrame(
+                panelSize: panelSize,
+                anchorFrame: anchorFrame,
+                screen: screen
+            )
+        case let .trailingMenuBar(screen, trailingInset):
+            panelFrame = LayoutCoordinator.trailingMenuBarPanelFrame(
+                panelSize: panelSize,
+                screen: screen,
+                trailingInset: trailingInset
+            )
         }
 
-        let panelFrame = LayoutCoordinator.panelFrame(
-            panelSize: applyPreferredContentSize(),
-            anchorFrame: anchorFrame,
-            screen: screen
-        )
         panel.setFrame(panelFrame, display: true)
         installEventMonitors()
         panel.orderFrontRegardless()
