@@ -43,6 +43,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     private var cancellables: Set<AnyCancellable> = []
     private var automaticRefreshSuppressedUntil: Date?
     private var pendingFrontmostRefreshWorkItem: DispatchWorkItem?
+    private var appWasFrontmostSinceLastExternalActivation = false
     private let automaticRefreshSuppressionDuration: TimeInterval = 5.0
     private let panelOpenRefreshDelay: TimeInterval = 0.05
     private let panelOpenRefreshStalenessThreshold: TimeInterval = 1.5
@@ -294,6 +295,10 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             return
         }
 
+        if shouldSkipRefreshWhileSelfIsActive(reason: reason) {
+            return
+        }
+
         syncPermissions(promptIfNeeded: false)
 
         guard appState.permissions.isReady else {
@@ -401,18 +406,37 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         return true
     }
 
+    private func shouldSkipRefreshWhileSelfIsActive(reason: String) -> Bool {
+        guard selfActiveRefreshSkipReasons.contains(reason) else {
+            return false
+        }
+
+        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Bundle.main.bundleIdentifier else {
+            return false
+        }
+
+        Logger.info("Skip refresh reason=\(reason) while kBar is active")
+        return true
+    }
+
     private func noteFrontmostApplicationDidChange(to bundleID: String?) {
         let appBundleID = Bundle.main.bundleIdentifier
-        guard bundleID != appBundleID else {
+        if bundleID == appBundleID {
+            appWasFrontmostSinceLastExternalActivation = true
+            Logger.info("kBar became active; defer external menu bar refresh until next external activation")
             return
         }
 
-        guard appState.observedFrontmostBundleID != bundleID else {
+        let returningFromSelfActivation = appWasFrontmostSinceLastExternalActivation
+        appWasFrontmostSinceLastExternalActivation = false
+        let observedBundleChanged = appState.observedFrontmostBundleID != bundleID
+
+        guard observedBundleChanged || returningFromSelfActivation else {
             return
         }
 
         appState.observedFrontmostBundleID = bundleID
-        let needsRefresh = appState.lastRefreshFrontmostBundleID != bundleID
+        let needsRefresh = returningFromSelfActivation || appState.lastRefreshFrontmostBundleID != bundleID
         appState.frontmostAppCacheDirty = needsRefresh
 
         guard needsRefresh else {
@@ -518,6 +542,10 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
 
     private var launchBootstrapRefreshReasons: Set<String> {
         ["launch", "launch-settling"]
+    }
+
+    private var selfActiveRefreshSkipReasons: Set<String> {
+        automaticRefreshReasons.union(["panel-open", "settings", "frontmost-app-change"])
     }
 
     private var shouldHideCachedMirrorPanelContentsOnOpen: Bool {
