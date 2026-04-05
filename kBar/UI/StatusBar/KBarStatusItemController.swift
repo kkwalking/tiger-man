@@ -24,7 +24,8 @@ final class KBarStatusItemController: NSObject {
             return
         }
 
-        let image = NSImage(systemSymbolName: "switch.2", accessibilityDescription: "kBar")
+        let image = NSImage(named: "StatusIcon")
+            ?? NSImage(systemSymbolName: "switch.2", accessibilityDescription: "kBar")
         image?.isTemplate = true
         button.image = image
         button.imagePosition = .imageOnly
