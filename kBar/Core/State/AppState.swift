@@ -14,6 +14,7 @@ final class AppState: ObservableObject {
     @Published var permissions = PermissionStatus()
     @Published var autoRefreshEnabled = true
     @Published var keepPanelOpenAfterInteraction = false
+    @Published var showOnlyHiddenItems = false
     @Published var isPanelVisible = false
     @Published var lastRefreshDate: Date?
     @Published var lastRefreshReason = "idle"
@@ -25,6 +26,14 @@ final class AppState: ObservableObject {
 
     init() {
         globalHotKeyShortcut = GlobalHotKeyShortcutStore.load()
+    }
+
+    var panelItems: [StatusItemModel] {
+        guard showOnlyHiddenItems else {
+            return items
+        }
+
+        return items.filter { !$0.isVisibleInMenuBar }
     }
 }
 

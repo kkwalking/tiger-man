@@ -103,6 +103,17 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
                 self?.globalHotKeyService.isEnabled = !isRecording
             }
             .store(in: &cancellables)
+
+        appState.$showOnlyHiddenItems
+            .dropFirst()
+            .sink { [weak self] _ in
+                guard let self else {
+                    return
+                }
+
+                self.mirrorPanelController.update(items: self.appState.panelItems)
+            }
+            .store(in: &cancellables)
     }
 
     private func observeSystemChanges() {

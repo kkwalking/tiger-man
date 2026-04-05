@@ -8,11 +8,13 @@ final class SettingsWindowController: NSWindowController {
         permissionCenter: PermissionCenter,
         refreshHandler: @escaping () -> Void
     ) {
-        let contentView = SettingsView(
+        let rootView = SettingsView(
             appState: appState,
             permissionCenter: permissionCenter,
             refreshHandler: refreshHandler
         )
+        let hostingView = NSHostingView(rootView: rootView)
+        hostingView.sizingOptions = []
 
         let window = NSWindow(
             contentRect: CGRect(x: 0, y: 0, width: 620, height: 380),
@@ -22,7 +24,7 @@ final class SettingsWindowController: NSWindowController {
         )
         window.center()
         window.title = "kBar Settings"
-        window.contentView = NSHostingView(rootView: contentView)
+        window.contentView = hostingView
         window.collectionBehavior = [.moveToActiveSpace]
         super.init(window: window)
         shouldCascadeWindows = true

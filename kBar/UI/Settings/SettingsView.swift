@@ -19,6 +19,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Toggle("自动刷新菜单栏映射", isOn: $appState.autoRefreshEnabled)
                 Toggle("交互后保持面板打开", isOn: $appState.keepPanelOpenAfterInteraction)
+                Toggle("仅展示被隐藏图标", isOn: $appState.showOnlyHiddenItems)
             }
 
             Divider()
@@ -102,6 +103,11 @@ struct SettingsView: View {
                 LabeledContent("已识别图标数量", value: "\(appState.items.count)")
                 Spacer()
                 Button("立即刷新", action: refreshHandler)
+            }
+            if appState.showOnlyHiddenItems {
+                Text("当前虚拟菜单栏只展示被 macOS 隐藏的图标。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
             if let lastError = appState.lastError {
                 Text(lastError)
