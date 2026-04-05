@@ -13,7 +13,6 @@ final class AppState: ObservableObject {
     @Published var isPanelRefreshing = false
     @Published var permissions = PermissionStatus()
     @Published var autoRefreshEnabled = true
-    @Published var keepPanelOpenAfterInteraction = false
     @Published var showOnlyHiddenItems = false
     @Published var isPanelVisible = false
     @Published var lastRefreshDate: Date?

@@ -232,11 +232,8 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     }
 
     private func handleInteraction(for item: StatusItemModel, interaction: StatusItemInteraction) {
-        let keepPanelOpen = appState.keepPanelOpenAfterInteraction
-        if !keepPanelOpen {
-            mirrorPanelController.close()
-            appState.isPanelVisible = false
-        }
+        mirrorPanelController.close()
+        appState.isPanelVisible = false
 
         let performForwarding = { [weak self] in
             guard let self else {
@@ -274,12 +271,8 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             }
         }
 
-        if keepPanelOpen {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
             performForwarding()
-        } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
-                performForwarding()
-            }
         }
     }
 

@@ -18,7 +18,6 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 Toggle("自动刷新菜单栏映射", isOn: $appState.autoRefreshEnabled)
-                Toggle("交互后保持面板打开", isOn: $appState.keepPanelOpenAfterInteraction)
                 Toggle("仅展示被隐藏图标", isOn: $appState.showOnlyHiddenItems)
             }
 
