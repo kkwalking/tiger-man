@@ -88,7 +88,7 @@ private struct RunningApplicationHiddenProbeResult {
 
 @MainActor
 final class StatusItemDiscoveryService {
-    private let diagnosticsVersion = "2026-04-02-hidden-extras-v2"
+    private let diagnosticsVersion = "2026-04-06-primary-menu-filter-v1"
     private let screenCaptureService: ScreenCaptureService
     private let diagnosticImageExportEnabled = DiagnosticsFileLogger.isScanImageExportEnabled
 
@@ -263,17 +263,8 @@ final class StatusItemDiscoveryService {
         let frontmostMenuMaxX = frontmostMenuFrames
             .map { $0.maxX }
             .max()
-        let minimumUsableScanWidth = min(220, max(140, (scanRegion.maxX - scanRegion.minX) * 0.42))
-        let effectiveScanMinX: CGFloat
-        if let frontmostMenuMaxX, frontmostMenuMaxX < scanRegion.maxX - 40 {
-            let proposedMinX = max(scanRegion.minX, frontmostMenuMaxX + 10)
-            let cappedMinX = max(scanRegion.minX, scanRegion.maxX - minimumUsableScanWidth)
-            effectiveScanMinX = min(proposedMinX, cappedMinX)
-        } else {
-            effectiveScanMinX = scanRegion.minX
-        }
         let scanRegionCandidates = withoutKBarCandidates.filter { candidate in
-            candidate.frame.minX >= effectiveScanMinX && candidate.frame.maxX <= scanRegion.maxX
+            candidate.frame.minX >= scanRegion.minX && candidate.frame.maxX <= scanRegion.maxX
         }
         let sizeQualifiedCandidates = scanRegionCandidates.filter { candidate in
             candidate.frame.width >= 8 && candidate.frame.width <= 72 &&
@@ -307,7 +298,7 @@ final class StatusItemDiscoveryService {
             CandidateFilterSnapshot(name: "menuBarBandCandidates", items: menuBarCandidates),
             CandidateFilterSnapshot(name: "excludingKBarCandidates", items: withoutKBarCandidates),
             CandidateFilterSnapshot(
-                name: "scanRegionCandidates[\(scanRegion.mode) min:\(Int(effectiveScanMinX)) max:\(Int(scanRegion.maxX)) reserve:\(Int(minimumUsableScanWidth))]",
+                name: "scanRegionCandidates[\(scanRegion.mode) min:\(Int(scanRegion.minX)) max:\(Int(scanRegion.maxX))]",
                 items: scanRegionCandidates
             ),
             CandidateFilterSnapshot(name: "sizeQualifiedCandidates", items: sizeQualifiedCandidates),
@@ -382,7 +373,7 @@ final class StatusItemDiscoveryService {
         }
 
         let appElement = AXUIElementCreateApplication(frontmostApp.processIdentifier)
-        guard let root = resolvedMenuBarElement(from: appElement) else {
+        guard let root = resolvedPrimaryMenuBarElement(from: appElement) else {
             return []
         }
 
@@ -949,22 +940,19 @@ final class StatusItemDiscoveryService {
     }
 
     private func preferredScanRegion(in menuBarFrame: CGRect, kBarFrame: CGRect?) -> CandidateScanRegion {
-        let baseScanWidth = min(460, max(200, menuBarFrame.width * 0.36))
-        let scanWidth = max(160, baseScanWidth - 76)
+        let screenHalfMinX = max(menuBarFrame.minX, floor(menuBarFrame.midX))
         let trailingMaxX = menuBarFrame.maxX - 6
-        let trailingMinX = max(menuBarFrame.minX, trailingMaxX - scanWidth)
 
         guard let kBarFrame else {
-            return CandidateScanRegion(minX: trailingMinX, maxX: trailingMaxX, mode: "trailingFallback")
+            return CandidateScanRegion(minX: screenHalfMinX, maxX: trailingMaxX, mode: "screenHalfFallback")
         }
 
         let anchoredMaxX = min(trailingMaxX, max(menuBarFrame.minX, kBarFrame.minX - 4))
-        guard anchoredMaxX - menuBarFrame.minX > 20 else {
-            return CandidateScanRegion(minX: menuBarFrame.minX, maxX: anchoredMaxX, mode: "leftOfKBar[narrow]")
+        guard anchoredMaxX - screenHalfMinX > 20 else {
+            return CandidateScanRegion(minX: screenHalfMinX, maxX: trailingMaxX, mode: "screenHalfFallback[narrow]")
         }
 
-        let anchoredMinX = max(menuBarFrame.minX, anchoredMaxX - scanWidth)
-        return CandidateScanRegion(minX: anchoredMinX, maxX: anchoredMaxX, mode: "leftOfKBar")
+        return CandidateScanRegion(minX: screenHalfMinX, maxX: anchoredMaxX, mode: "screenHalfToKBar")
     }
 
     private func hiddenProbeCollection(
@@ -1916,6 +1904,10 @@ final class StatusItemDiscoveryService {
             return extrasMenuBar
         }
 
+        return resolvedPrimaryMenuBarElement(from: appElement)
+    }
+
+    private func resolvedPrimaryMenuBarElement(from appElement: AXUIElement) -> AXUIElement? {
         if let menuBar = copyElementAttribute(kAXMenuBarAttribute as String, from: appElement) {
             return menuBar
         }
