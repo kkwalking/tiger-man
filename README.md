@@ -1,5 +1,5 @@
 <div align="center">
-<a href="./"><img src="app_icon_origin.png" width="120"/></a>
+<a href="https://github.com/kkwalking/tiger-man"><img src="app_icon_origin.png" width="120"/></a>
 </div>
 <h1 align="center">Tiger Man</h1>
 
