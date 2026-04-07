@@ -9,6 +9,7 @@ xcuserdata/
 DerivedData/
 .xcode-derived-data/
 build/
+dist/
 
 # Legacy SwiftPM caches
 .build/

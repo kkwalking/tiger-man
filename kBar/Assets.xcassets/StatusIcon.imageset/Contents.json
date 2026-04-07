@@ -1,11 +1,12 @@
 {
   "images" : [
     {
-      "filename" : "compact-disc-black-18.svg",
+      "filename" : "status_icon_16.svg",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
+      "filename" : "status_icon_32.svg",
       "idiom" : "universal",
       "scale" : "2x"
     },
