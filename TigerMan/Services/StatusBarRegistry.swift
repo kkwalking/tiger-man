@@ -16,8 +16,8 @@ final class StatusBarRegistry {
         self.discoveryService = discoveryService
     }
 
-    func refresh(on screen: NSScreen, kBarFrame: CGRect?) -> StatusBarRefreshResult {
-        let result = discoveryService.discoverItems(on: screen, kBarFrame: kBarFrame)
+    func refresh(on screen: NSScreen, tigerManFrame: CGRect?) -> StatusBarRefreshResult {
+        let result = discoveryService.discoverItems(on: screen, tigerManFrame: tigerManFrame)
         items = result.items.sorted(by: sortItems)
         return StatusBarRefreshResult(
             items: items,

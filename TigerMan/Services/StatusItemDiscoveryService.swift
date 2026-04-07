@@ -96,9 +96,9 @@ final class StatusItemDiscoveryService {
         self.screenCaptureService = screenCaptureService
     }
 
-    func discoverItems(on screen: NSScreen, kBarFrame: CGRect?) -> DiscoveryResult {
+    func discoverItems(on screen: NSScreen, tigerManFrame: CGRect?) -> DiscoveryResult {
         let menuBarFrame = LayoutCoordinator.menuBarFrame(for: screen)
-        let scanRegion = preferredScanRegion(in: menuBarFrame, kBarFrame: kBarFrame)
+        let scanRegion = preferredScanRegion(in: menuBarFrame, tigerManFrame: tigerManFrame)
         let accessibilityCandidates = collectCandidates(on: screen, scanRegion: scanRegion)
         let fallbackVisibleCandidates = accessibilityCandidates.filter { candidate in
             candidate.frame.intersects(menuBarBand(for: screen))
@@ -129,7 +129,7 @@ final class StatusItemDiscoveryService {
             )
         }
 
-        let screenshotResult = screenshotFallbackCandidates(in: capture, kBarFrame: kBarFrame)
+        let screenshotResult = screenshotFallbackCandidates(in: capture, tigerManFrame: tigerManFrame)
         let screenshotCandidates = screenshotResult.candidates
         let rawCandidates = deduplicate(accessibilityCandidates + screenshotCandidates)
         var diagnostics: [String] = []
@@ -144,10 +144,10 @@ final class StatusItemDiscoveryService {
         diagnostics.append("rawCandidates=\(rawCandidates.count)")
         diagnostics.append("menuBarFrame=x:\(Int(menuBarFrame.minX)) y:\(Int(menuBarFrame.minY)) w:\(Int(menuBarFrame.width)) h:\(Int(menuBarFrame.height))")
         diagnostics.append("scanRegion=min:\(Int(scanRegion.minX)) max:\(Int(scanRegion.maxX)) mode:\(scanRegion.mode)")
-        if let kBarFrame {
-            diagnostics.append("kBarFrame=x:\(Int(kBarFrame.minX)) y:\(Int(kBarFrame.minY)) w:\(Int(kBarFrame.width)) h:\(Int(kBarFrame.height))")
+        if let tigerManFrame {
+            diagnostics.append("tigerManFrame=x:\(Int(tigerManFrame.minX)) y:\(Int(tigerManFrame.minY)) w:\(Int(tigerManFrame.width)) h:\(Int(tigerManFrame.height))")
         } else {
-            diagnostics.append("kBarFrame=nil")
+            diagnostics.append("tigerManFrame=nil")
         }
         diagnostics.append(contentsOf: screenshotResult.diagnostics)
         let filterSnapshots = buildFilterSnapshots(
@@ -155,7 +155,7 @@ final class StatusItemDiscoveryService {
             screen: screen,
             menuBarFrame: menuBarFrame,
             scanRegion: scanRegion,
-            kBarFrame: kBarFrame
+            tigerManFrame: tigerManFrame
         )
         let filteredCandidates = filterSnapshots.last?.items ?? []
         let hiddenProbeCollection = hiddenProbeCollection(
@@ -243,19 +243,19 @@ final class StatusItemDiscoveryService {
         screen: NSScreen,
         menuBarFrame: CGRect,
         scanRegion: CandidateScanRegion,
-        kBarFrame: CGRect?
+        tigerManFrame: CGRect?
     ) -> [CandidateFilterSnapshot] {
         let protectedSystemRegionMinX = menuBarFrame.maxX - reservedSystemTrailingWidth(in: menuBarFrame)
         let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let menuBarCandidates = rawCandidates.filter { candidate in
             candidate.frame.intersects(menuBarBand(for: screen))
         }
-        let withoutKBarCandidates = menuBarCandidates.filter { candidate in
-            guard let kBarFrame else { return true }
-            return !candidate.frame.intersects(kBarFrame.insetBy(dx: -6, dy: -4))
+        let withoutTigerManCandidates = menuBarCandidates.filter { candidate in
+            guard let tigerManFrame else { return true }
+            return !candidate.frame.intersects(tigerManFrame.insetBy(dx: -6, dy: -4))
         }
         let inferredFrontmostMenuFrames = frontmostMenuCandidateFrames(
-            from: withoutKBarCandidates,
+            from: withoutTigerManCandidates,
             frontmostBundleID: frontmostBundleID
         )
         let directFrontmostMenuFrames = frontmostApplicationMenuFrames(on: screen)
@@ -263,7 +263,7 @@ final class StatusItemDiscoveryService {
         let frontmostMenuMaxX = frontmostMenuFrames
             .map { $0.maxX }
             .max()
-        let scanRegionCandidates = withoutKBarCandidates.filter { candidate in
+        let scanRegionCandidates = withoutTigerManCandidates.filter { candidate in
             candidate.frame.minX >= scanRegion.minX && candidate.frame.maxX <= scanRegion.maxX
         }
         let sizeQualifiedCandidates = scanRegionCandidates.filter { candidate in
@@ -296,7 +296,7 @@ final class StatusItemDiscoveryService {
 
         return [
             CandidateFilterSnapshot(name: "menuBarBandCandidates", items: menuBarCandidates),
-            CandidateFilterSnapshot(name: "excludingKBarCandidates", items: withoutKBarCandidates),
+            CandidateFilterSnapshot(name: "excludingTigerManCandidates", items: withoutTigerManCandidates),
             CandidateFilterSnapshot(
                 name: "scanRegionCandidates[\(scanRegion.mode) min:\(Int(scanRegion.minX)) max:\(Int(scanRegion.maxX))]",
                 items: scanRegionCandidates
@@ -792,7 +792,7 @@ final class StatusItemDiscoveryService {
         return results
     }
 
-    private func screenshotFallbackCandidates(in capture: MenuBarCapture, kBarFrame: CGRect?) -> ScreenshotFallbackResult {
+    private func screenshotFallbackCandidates(in capture: MenuBarCapture, tigerManFrame: CGRect?) -> ScreenshotFallbackResult {
         guard let providerData = capture.image.dataProvider?.data,
               let rawPointer = CFDataGetBytePtr(providerData)
         else {
@@ -806,7 +806,7 @@ final class StatusItemDiscoveryService {
         let expectedPixelHeight = max(12, Int((capture.menuBarFrame.height * capture.scale).rounded()))
         let analysisHeight = min(height, expectedPixelHeight)
 
-        let scanRegion = preferredScanRegion(in: capture.menuBarFrame, kBarFrame: kBarFrame)
+        let scanRegion = preferredScanRegion(in: capture.menuBarFrame, tigerManFrame: tigerManFrame)
         let startScreenX = scanRegion.minX
         let endScreenX = scanRegion.maxX
 
@@ -939,20 +939,20 @@ final class StatusItemDiscoveryService {
         )
     }
 
-    private func preferredScanRegion(in menuBarFrame: CGRect, kBarFrame: CGRect?) -> CandidateScanRegion {
+    private func preferredScanRegion(in menuBarFrame: CGRect, tigerManFrame: CGRect?) -> CandidateScanRegion {
         let screenHalfMinX = max(menuBarFrame.minX, floor(menuBarFrame.midX))
         let trailingMaxX = menuBarFrame.maxX - 6
 
-        guard let kBarFrame else {
+        guard let tigerManFrame else {
             return CandidateScanRegion(minX: screenHalfMinX, maxX: trailingMaxX, mode: "screenHalfFallback")
         }
 
-        let anchoredMaxX = min(trailingMaxX, max(menuBarFrame.minX, kBarFrame.minX - 4))
+        let anchoredMaxX = min(trailingMaxX, max(menuBarFrame.minX, tigerManFrame.minX - 4))
         guard anchoredMaxX - screenHalfMinX > 20 else {
             return CandidateScanRegion(minX: screenHalfMinX, maxX: trailingMaxX, mode: "screenHalfFallback[narrow]")
         }
 
-        return CandidateScanRegion(minX: screenHalfMinX, maxX: anchoredMaxX, mode: "screenHalfToKBar")
+        return CandidateScanRegion(minX: screenHalfMinX, maxX: anchoredMaxX, mode: "screenHalfToTigerMan")
     }
 
     private func hiddenProbeCollection(
@@ -2237,7 +2237,7 @@ final class StatusItemDiscoveryService {
     }
 
     private func exportCaptureImage(_ capture: MenuBarCapture) -> String? {
-        exportPNGImage(capture.image, prefix: "kbar-menubar-capture")
+        exportPNGImage(capture.image, prefix: "tigerman-menubar-capture")
     }
 
     private func exportAnnotatedCaptureImage(
@@ -2307,7 +2307,7 @@ final class StatusItemDiscoveryService {
             return nil
         }
 
-        return exportPNGImage(cgImage, prefix: "kbar-menubar-annotated")
+        return exportPNGImage(cgImage, prefix: "tigerman-menubar-annotated")
     }
 
     private func exportPNGImage(_ image: CGImage, prefix: String) -> String? {

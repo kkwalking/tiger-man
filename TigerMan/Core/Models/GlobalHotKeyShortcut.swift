@@ -166,7 +166,7 @@ struct GlobalHotKeyShortcut: Codable, Equatable {
 }
 
 enum GlobalHotKeyShortcutStore {
-    private static let defaultsKey = "kBar.globalHotKeyShortcut"
+    private static let defaultsKey = "tigerman.globalHotKeyShortcut"
 
     static func load() -> GlobalHotKeyShortcut {
         guard let data = UserDefaults.standard.data(forKey: defaultsKey),

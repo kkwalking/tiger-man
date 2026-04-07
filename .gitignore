@@ -19,7 +19,7 @@ dist/
 .dev-clang-module-cache/
 
 tmp
-kbar-events.log
-kbar-scan-latest.log
-kbar-interaction-latest.log
-kbar-hidden-discovery-latest.log
+tigerman-events.log
+tigerman-scan-latest.log
+tigerman-interaction-latest.log
+tigerman-hidden-discovery-latest.log

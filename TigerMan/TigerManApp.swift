@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct kBarApp: App {
+struct TigerManApp: App {
     @NSApplicationDelegateAdaptor(AppCoordinator.self) private var appCoordinator
 
     var body: some Scene {

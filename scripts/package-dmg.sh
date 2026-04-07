@@ -3,9 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PROJECT_PATH="$ROOT_DIR/kBar.xcodeproj"
-SCHEME_NAME="kBar"
-APP_NAME="kBar"
+PROJECT_PATH="$ROOT_DIR/TigerMan.xcodeproj"
+SCHEME_NAME="TigerMan"
+APP_NAME="TigerMan"
 CONFIGURATION="${CONFIGURATION:-Release}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/dist}"
 
@@ -28,15 +28,15 @@ MARKETING_VERSION="$(
       print $2
       exit
     }
-  ' "$ROOT_DIR/kBar.xcodeproj/project.pbxproj"
+  ' "$ROOT_DIR/TigerMan.xcodeproj/project.pbxproj"
 )"
 
 if [[ -z "$MARKETING_VERSION" ]]; then
   MARKETING_VERSION="0.0.0"
 fi
 
-BUILD_ROOT="$(mktemp -d "/tmp/kbar-package-build.XXXXXX")"
-DMG_ROOT="$(mktemp -d "/tmp/kbar-package-root.XXXXXX")"
+BUILD_ROOT="$(mktemp -d "/tmp/tigerman-package-build.XXXXXX")"
+DMG_ROOT="$(mktemp -d "/tmp/tigerman-package-root.XXXXXX")"
 HOME_DIR="$BUILD_ROOT/home"
 OBJROOT="$BUILD_ROOT/obj"
 SYMROOT="$BUILD_ROOT/sym"
@@ -64,7 +64,7 @@ mkdir -p \
   "$SDK_CACHE" \
   "$DERIVED_DATA"
 
-echo "==> Building $APP_NAME ($CONFIGURATION)"
+echo "==> Building $SCHEME_NAME ($CONFIGURATION) -> $APP_NAME.app"
 HOME="$HOME_DIR" xcodebuild \
   -project "$PROJECT_PATH" \
   -scheme "$SCHEME_NAME" \

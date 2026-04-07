@@ -90,7 +90,7 @@ struct SettingsView: View {
 
             Text(hotKeyRecorder.isRecording
                  ? "按下新的快捷键，按 Esc 取消。"
-                 : "当菜单栏中的 kBar 被系统隐藏时，仍可用该快捷键打开或收起虚拟菜单栏。点击上方快捷键可重新录制，快捷键至少包含一个修饰键。")
+                 : "当菜单栏中的 TigerMan 被系统隐藏时，仍可用该快捷键打开或收起虚拟菜单栏。点击上方快捷键可重新录制，快捷键至少包含一个修饰键。")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }

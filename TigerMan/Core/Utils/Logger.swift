@@ -2,12 +2,12 @@ import Foundation
 
 enum Logger {
     static func info(_ message: String) {
-        NSLog("[kBar] %@", message)
+        NSLog("[TigerMan] %@", message)
         DiagnosticsFileLogger.appendRuntimeLog(level: "info", message: message)
     }
 
     static func error(_ message: String) {
-        NSLog("[kBar][Error] %@", message)
+        NSLog("[TigerMan][Error] %@", message)
         DiagnosticsFileLogger.appendRuntimeLog(level: "error", message: message)
     }
 }

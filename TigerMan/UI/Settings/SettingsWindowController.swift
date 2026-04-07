@@ -23,7 +23,7 @@ final class SettingsWindowController: NSWindowController {
             defer: false
         )
         window.center()
-        window.title = "kBar Settings"
+        window.title = "TigerMan Settings"
         window.contentView = hostingView
         window.collectionBehavior = [.moveToActiveSpace]
         super.init(window: window)

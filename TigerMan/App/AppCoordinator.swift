@@ -15,7 +15,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     private lazy var discoveryService = StatusItemDiscoveryService(screenCaptureService: screenCaptureService)
     private lazy var statusBarRegistry = StatusBarRegistry(discoveryService: discoveryService)
     private let interactionProxy = InteractionProxy()
-    private lazy var statusItemController = KBarStatusItemController()
+    private lazy var statusItemController = TigerManStatusItemController()
     private lazy var globalHotKeyService = GlobalHotKeyService(shortcut: appState.globalHotKeyShortcut) { [weak self] in
         self?.toggleMirrorPanel(trigger: .hotKey)
     }
@@ -212,7 +212,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         }
 
         guard let placement = mirrorPanelPlacement(for: trigger) else {
-            appState.lastError = "无法获取 kBar 菜单栏位置。"
+            appState.lastError = "无法获取 TigerMan 菜单栏位置。"
             return
         }
 
@@ -318,7 +318,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
                 permissions: appState.permissions,
                 itemCount: 0,
                 menuBarFrame: appState.menuBarFrame,
-                kBarFrame: statusItemController.screenFrame(),
+                tigerManFrame: statusItemController.screenFrame(),
                 diagnostics: appState.scanDiagnostics,
                 lastError: appState.lastError
             )
@@ -340,7 +340,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
                 permissions: appState.permissions,
                 itemCount: 0,
                 menuBarFrame: appState.menuBarFrame,
-                kBarFrame: statusItemController.screenFrame(),
+                tigerManFrame: statusItemController.screenFrame(),
                 diagnostics: ["未找到主屏幕。"],
                 lastError: appState.lastError
             )
@@ -353,8 +353,8 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             return
         }
 
-        let kBarFrame = updateVisibleStatusItemFrame()
-        let result = statusBarRegistry.refresh(on: screen, kBarFrame: kBarFrame)
+        let tigerManFrame = updateVisibleStatusItemFrame()
+        let result = statusBarRegistry.refresh(on: screen, tigerManFrame: tigerManFrame)
 
         appState.items = result.items
         appState.scanDiagnostics = result.diagnostics
@@ -374,7 +374,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             permissions: appState.permissions,
             itemCount: result.items.count,
             menuBarFrame: result.menuBarFrame,
-            kBarFrame: kBarFrame,
+            tigerManFrame: tigerManFrame,
             diagnostics: result.diagnostics,
             lastError: appState.lastError
         )
@@ -419,7 +419,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
             return false
         }
 
-        Logger.info("Skip refresh reason=\(reason) while kBar is active")
+        Logger.info("Skip refresh reason=\(reason) while TigerMan is active")
         return true
     }
 
@@ -427,7 +427,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         let appBundleID = Bundle.main.bundleIdentifier
         if bundleID == appBundleID {
             appWasFrontmostSinceLastExternalActivation = true
-            Logger.info("kBar became active; defer external menu bar refresh until next external activation")
+            Logger.info("TigerMan became active; defer external menu bar refresh until next external activation")
             return
         }
 
@@ -468,7 +468,7 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
     private func mirrorPanelPlacement(for trigger: MirrorPanelTrigger) -> MirrorPanelController.PanelPlacement? {
         if let statusItemFrame = updateVisibleStatusItemFrame() {
             if trigger == .hotKey {
-                Logger.info("Mirror panel hot key anchored to visible kBar status item")
+                Logger.info("Mirror panel hot key anchored to visible TigerMan status item")
             }
             return .anchorFrame(statusItemFrame)
         }

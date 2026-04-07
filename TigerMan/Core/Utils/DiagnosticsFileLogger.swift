@@ -11,12 +11,18 @@ private enum DiagnosticsConfiguration {
 }
 
 enum DiagnosticsFileLogger {
-    private static let baseURL = URL(fileURLWithPath: "/Users/zhouzekun/code/kbar", isDirectory: true)
-    private static let eventsURL = baseURL.appendingPathComponent("kbar-events.log")
-    private static let latestScanURL = baseURL.appendingPathComponent("kbar-scan-latest.log")
-    private static let latestInteractionURL = baseURL.appendingPathComponent("kbar-interaction-latest.log")
-    private static let latestHiddenDiscoveryURL = baseURL.appendingPathComponent("kbar-hidden-discovery-latest.log")
-    private static let queue = DispatchQueue(label: "com.zhouzekun.kbar.diagnostics-file")
+    private static let baseURL: URL = {
+        URL(fileURLWithPath: #filePath, isDirectory: false)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }()
+    private static let eventsURL = baseURL.appendingPathComponent("tigerman-events.log")
+    private static let latestScanURL = baseURL.appendingPathComponent("tigerman-scan-latest.log")
+    private static let latestInteractionURL = baseURL.appendingPathComponent("tigerman-interaction-latest.log")
+    private static let latestHiddenDiscoveryURL = baseURL.appendingPathComponent("tigerman-hidden-discovery-latest.log")
+    private static let queue = DispatchQueue(label: "com.zhouzekun.tigerman.diagnostics-file")
 
     static var isEnabled: Bool {
         DiagnosticsConfiguration.isEnabled
@@ -44,7 +50,7 @@ enum DiagnosticsFileLogger {
         permissions: PermissionStatus,
         itemCount: Int,
         menuBarFrame: CGRect,
-        kBarFrame: CGRect?,
+        tigerManFrame: CGRect?,
         diagnostics: [String],
         lastError: String?
     ) {
@@ -57,7 +63,7 @@ enum DiagnosticsFileLogger {
             "permissions=ax:\(permissions.accessibilityGranted) screen:\(permissions.screenCaptureGranted)",
             "itemCount=\(itemCount)",
             "menuBarFrame=\(rectDescription(menuBarFrame))",
-            "kBarFrame=\(kBarFrame.map(rectDescription) ?? "nil")",
+            "tigerManFrame=\(tigerManFrame.map(rectDescription) ?? "nil")",
             "lastError=\(lastError ?? "nil")",
             "diagnostics=begin",
         ]
@@ -155,7 +161,7 @@ enum DiagnosticsFileLogger {
                 try ensureBaseDirectory()
                 try content.write(to: url, atomically: true, encoding: .utf8)
             } catch {
-                NSLog("[kBar][Diagnostics][Error] Failed to write %@: %@", url.path, String(describing: error))
+                NSLog("[TigerMan][Diagnostics][Error] Failed to write %@: %@", url.path, String(describing: error))
             }
         }
     }
@@ -174,7 +180,7 @@ enum DiagnosticsFileLogger {
                 try handle.seekToEnd()
                 try handle.write(contentsOf: data)
             } catch {
-                NSLog("[kBar][Diagnostics][Error] Failed to append %@: %@", url.path, String(describing: error))
+                NSLog("[TigerMan][Diagnostics][Error] Failed to append %@: %@", url.path, String(describing: error))
             }
         }
     }

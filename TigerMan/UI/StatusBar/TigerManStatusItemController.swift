@@ -1,7 +1,7 @@
 import AppKit
 
 @MainActor
-final class KBarStatusItemController: NSObject {
+final class TigerManStatusItemController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
     var primaryActionHandler: (() -> Void)?
@@ -25,14 +25,14 @@ final class KBarStatusItemController: NSObject {
         }
 
         let image = NSImage(named: "StatusIcon")
-            ?? NSImage(systemSymbolName: "switch.2", accessibilityDescription: "kBar")
+            ?? NSImage(systemSymbolName: "switch.2", accessibilityDescription: "TigerMan")
         image?.isTemplate = true
         button.image = image
         button.imagePosition = .imageOnly
         button.action = #selector(handleButtonAction(_:))
         button.target = self
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        button.toolTip = "kBar"
+        button.toolTip = "TigerMan"
     }
 
     @objc

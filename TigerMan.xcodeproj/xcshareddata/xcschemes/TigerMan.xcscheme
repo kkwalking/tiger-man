@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A10000000000000000000006"
-               BuildableName = "kBar.app"
-               BlueprintName = "kBar"
-               ReferencedContainer = "container:kBar.xcodeproj">
+               BuildableName = "TigerMan.app"
+               BlueprintName = "TigerMan"
+               ReferencedContainer = "container:TigerMan.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -46,9 +46,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A10000000000000000000006"
-            BuildableName = "kBar.app"
-            BlueprintName = "kBar"
-            ReferencedContainer = "container:kBar.xcodeproj">
+            BuildableName = "TigerMan.app"
+            BlueprintName = "TigerMan"
+            ReferencedContainer = "container:TigerMan.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -63,9 +63,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A10000000000000000000006"
-            BuildableName = "kBar.app"
-            BlueprintName = "kBar"
-            ReferencedContainer = "container:kBar.xcodeproj">
+            BuildableName = "TigerMan.app"
+            BlueprintName = "TigerMan"
+            ReferencedContainer = "container:TigerMan.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
