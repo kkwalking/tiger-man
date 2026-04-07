@@ -58,8 +58,11 @@ final class AppCoordinator: NSObject, NSApplicationDelegate {
         statusItemController.primaryActionHandler = { [weak self] in
             self?.toggleMirrorPanel(trigger: .statusItem)
         }
-        statusItemController.secondaryActionHandler = { [weak self] in
+        statusItemController.preferencesActionHandler = { [weak self] in
             self?.showSettings()
+        }
+        statusItemController.quitActionHandler = {
+            NSApp.terminate(nil)
         }
 
         bindState()

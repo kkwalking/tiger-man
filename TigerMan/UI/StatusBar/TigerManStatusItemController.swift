@@ -1,11 +1,13 @@
 import AppKit
 
 @MainActor
-final class TigerManStatusItemController: NSObject {
+final class TigerManStatusItemController: NSObject, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private lazy var contextMenu = makeContextMenu()
 
     var primaryActionHandler: (() -> Void)?
-    var secondaryActionHandler: (() -> Void)?
+    var preferencesActionHandler: (() -> Void)?
+    var quitActionHandler: (() -> Void)?
 
     override init() {
         super.init()
@@ -35,13 +37,57 @@ final class TigerManStatusItemController: NSObject {
         button.toolTip = "TigerMan"
     }
 
+    private func makeContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.delegate = self
+
+        let preferencesItem = NSMenuItem(
+            title: "偏好设置",
+            action: #selector(handlePreferencesAction),
+            keyEquivalent: ""
+        )
+        preferencesItem.target = self
+        menu.addItem(preferencesItem)
+
+        let quitItem = NSMenuItem(
+            title: "退出",
+            action: #selector(handleQuitAction),
+            keyEquivalent: ""
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        return menu
+    }
+
     @objc
     private func handleButtonAction(_ sender: Any?) {
         switch NSApp.currentEvent?.type {
         case .rightMouseUp:
-            secondaryActionHandler?()
+            statusItem.menu = contextMenu
+            statusItem.button?.performClick(nil)
         default:
             primaryActionHandler?()
+        }
+    }
+
+    @objc
+    private func handlePreferencesAction(_ sender: Any?) {
+        preferencesActionHandler?()
+    }
+
+    @objc
+    private func handleQuitAction(_ sender: Any?) {
+        if let quitActionHandler {
+            quitActionHandler()
+        } else {
+            NSApp.terminate(nil)
+        }
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        if statusItem.menu === menu {
+            statusItem.menu = nil
         }
     }
 }
