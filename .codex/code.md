@@ -71,6 +71,12 @@
 3. `DMG` 内容固定为 `TigerMan.app + /Applications` 快捷方式，遵循 macOS 常见的“拖到 Applications”安装方式。
 4. 当前产物未做 `Developer ID` 签名和 notarization；目标机器首次打开时，需要用户在“系统设置 > 隐私与安全性”里手动点“仍要打开”。
 
+### 3.8 仓库说明文档组织（已实现）
+
+1. 需求、实现方案和开发进展文档已统一迁移到 `.codex/spec.md`、`.codex/code.md`、`.codex/process.md`。
+2. 仓库根目录保留面向外部阅读的双语说明：英文入口为 `README.md`，中文入口为 `README_zh.md`。
+3. README 中使用的界面预览图统一放在 `screenshots/` 目录，当前包含虚拟菜单栏与设置页截图。
+
 ## 4. 工程模块与职责
 
 ### 4.1 App 与状态

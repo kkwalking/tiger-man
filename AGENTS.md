@@ -2,7 +2,7 @@
 
 ## 项目结构与模块划分
 
-`TigerMan/` 是主代码目录。`App/` 放应用生命周期与刷新调度，`Services/` 放扫描、截图、快捷键、权限与交互转发，`UI/` 放状态栏、面板和设置页，`Core/` 放状态、模型与日志工具。资源位于 `TigerMan/Assets.xcassets/`。仓库根目录的 `spec.md`、`code.md`、`process.md` 分别记录需求、实现方案和开发进展；功能变更后应同步更新。
+`TigerMan/` 是主代码目录。`App/` 放应用生命周期与刷新调度，`Services/` 放扫描、截图、快捷键、权限与交互转发，`UI/` 放状态栏、面板和设置页，`Core/` 放状态、模型与日志工具。资源位于 `TigerMan/Assets.xcassets/`。仓库中的 `.codex/spec.md`、`.codex/code.md`、`.codex/process.md` 分别记录需求、实现方案和开发进展；功能变更后应同步更新。
 
 ## 构建、测试与开发命令
 
@@ -24,9 +24,9 @@
 
 ## 提交与 PR 规范
 
-提交信息遵循当前历史风格：简短、英文、祈使句，例如 `Add configurable global hot key fallback`、`Protect refresh when TigerMan is active`。Pull Request 应说明用户可见变化、验证方式、是否更新 `spec.md`/`code.md`/`process.md`；若改动影响面板、设置页或菜单栏图标，请附截图。
+提交信息遵循当前历史风格：简短、英文、祈使句，例如 `Add configurable global hot key fallback`、`Protect refresh when TigerMan is active`。Pull Request 应说明用户可见变化、验证方式、是否更新 `.codex/spec.md` / `.codex/code.md` / `.codex/process.md`；若改动影响面板、设置页或菜单栏图标，请附截图。
 
-每次准备 `git commit` 和 `git push` 前，必须先同步更新根目录的 `spec.md`、`code.md`、`process.md`，写入最新开发进展，并清理其中已经过时、相互冲突或与当前实现不符的描述；不要把过期口径留到后续提交再处理。
+每次准备 `git commit` 和 `git push` 前，必须先同步更新 `.codex/spec.md`、`.codex/code.md`、`.codex/process.md`，写入最新开发进展，并清理其中已经过时、相互冲突或与当前实现不符的描述；不要把过期口径留到后续提交再处理。
 
 ## 配置与排障
 
