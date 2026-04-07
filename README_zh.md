@@ -11,14 +11,13 @@
 
 ## 截图
 
+虚拟菜单栏
+<div align="center"><img src="screenshots/virtual_menu.png" width="500"/></div>
 
-虚拟菜单栏面板：
 
-![TigerMan 虚拟菜单栏预览](screenshots/virtual_menu.png)
+设置页
+<div align="center"><img src="screenshots/settings.png" width="500"/></div>
 
-设置页：
-
-![TigerMan 设置页预览](screenshots/settings.png)
 
 ## 开发背景
 

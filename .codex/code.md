@@ -76,6 +76,7 @@
 1. 需求、实现方案和开发进展文档已统一迁移到 `.codex/spec.md`、`.codex/code.md`、`.codex/process.md`。
 2. 仓库根目录保留面向外部阅读的双语说明：英文入口为 `README.md`，中文入口为 `README_zh.md`。
 3. README 中使用的界面预览图统一放在 `screenshots/` 目录，当前包含虚拟菜单栏与设置页截图。
+4. 当前 README 为了改善仓库首页观感，截图展示改为使用居中的 HTML `img` 标签并限制统一宽度。
 
 ## 4. 工程模块与职责
 

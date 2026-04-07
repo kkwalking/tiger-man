@@ -11,11 +11,12 @@
 
 Virtual menu bar preview:
 
-![TigerMan virtual menu preview](screenshots/virtual_menu.png)
+<div align="center"><img src="screenshots/virtual_menu.png" width="500"/></div>
 
 Settings preview:
 
-![TigerMan settings preview](screenshots/settings.png)
+<div align="center"><img src="screenshots/settings.png" width="500"/></div>
+
 
 ## Background
 
