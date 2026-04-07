@@ -52,9 +52,10 @@ final class TigerManStatusItemController: NSObject, NSMenuDelegate {
         let quitItem = NSMenuItem(
             title: "退出",
             action: #selector(handleQuitAction),
-            keyEquivalent: ""
+            keyEquivalent: "q"
         )
         quitItem.target = self
+        quitItem.keyEquivalentModifierMask = [.command]
         menu.addItem(quitItem)
 
         return menu
