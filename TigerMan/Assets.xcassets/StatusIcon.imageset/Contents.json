@@ -1,16 +1,17 @@
 {
   "images" : [
     {
-      "filename" : "status_icon_16.svg",
+      "filename" : "cute-tiger-menu-bar-16.svg",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
-      "filename" : "status_icon_32.svg",
+      "filename" : "cute-tiger-menu-bar-32.svg",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
+      "filename" : "cute-tiger-menu-bar-32 1.svg",
       "idiom" : "universal",
       "scale" : "3x"
     }
